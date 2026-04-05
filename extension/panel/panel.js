@@ -659,6 +659,16 @@ async function pollResults() {
 
         if (data.status === 'awaiting_approval' || data.status === 'completed') {
             clearInterval(pollInterval);
+
+            // Force progress to 100%
+            document.getElementById('progressLabel').textContent = 'Analysis complete!';
+            document.getElementById('progressPercent').textContent = '100%';
+            document.getElementById('progressFill').style.width = '100%';
+            const mascotStatus = document.getElementById('mascotStatus');
+            if (mascotStatus) mascotStatus.textContent = 'All done! Generating results...';
+            const mascotTitle = document.querySelector('.mascot-progress-title');
+            if (mascotTitle) mascotTitle.textContent = 'Complete!';
+
             await saveState('results');
             enableTab('results');
             switchTab('results');
@@ -754,6 +764,8 @@ function updateProgress(data) {
             // Tag-based styling
             if (msg.includes('[TASK]')) entry.classList.add('log-task');
             if (msg.includes('[slow]')) entry.classList.add('log-slow');
+            if (msg.includes('[done]')) entry.classList.add('log-done');
+            if (msg.includes('[thinking]')) entry.classList.add('log-thinking');
             if (msg.includes('confusion') || msg.includes('backtracking')) entry.classList.add('log-confusion');
             if (msg.includes('Zoomed in')) entry.classList.add('log-zoom');
 
@@ -768,6 +780,8 @@ function updateProgress(data) {
             }
             cleaned = cleaned.replace('[TASK] ', '');
             cleaned = cleaned.replace(' [slow]', '');
+            cleaned = cleaned.replace('[done] ', '');
+            cleaned = cleaned.replace(' [thinking]', '').replace('[thinking]: ', '');
 
             if (timeStr) {
                 const ts = document.createElement('span');

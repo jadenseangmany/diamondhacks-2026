@@ -282,22 +282,145 @@ async def step_execute_personas(run: TestRun, on_progress: ProgressCallback = No
     return run
 
 
-def _parse_step_summary(raw: str, persona_name: str, elapsed_sec: float) -> str | None:
+import random
+
+# Persona-specific thinking commentary templates
+_PERSONA_THOUGHTS = {
+    "elderly": {
+        "click": [
+            "Let me try clicking this... I hope it takes me to the right place.",
+            "Oh, I think this might be what I need. Let me click it carefully.",
+            "Hmm, this button is quite small. Let me try to press it...",
+            "I'm going to click this and see what happens. Fingers crossed!",
+        ],
+        "scroll": [
+            "Let me scroll down to see if there's more information below...",
+            "I can't find what I need up here, maybe it's further down the page.",
+            "Oh my, there's so much on this page. Let me keep scrolling...",
+        ],
+        "zoom": [
+            "Oh dear, this text is so tiny! I need to make it bigger to read.",
+            "I can barely see these words. Let me zoom in...",
+            "Why do they make the font so small? Let me zoom in again.",
+        ],
+        "navigate": [
+            "Let me go to this page and see if I can find what I'm looking for.",
+            "Okay, I'll try going to this part of the website now.",
+            "I hope this link takes me somewhere helpful...",
+        ],
+        "search": [
+            "Where is it? Let me look around this page more carefully...",
+            "I'm trying to find the right thing but everything looks confusing.",
+            "Oh dear, I'm not sure where to look. Let me keep searching.",
+        ],
+        "confusion": [
+            "I'm completely lost. Nothing on this page makes sense to me.",
+            "Oh no, I don't know what to do here. This is very confusing.",
+            "Where am I supposed to go? This website is so hard to use!",
+        ],
+        "backtrack": [
+            "That wasn't right. Let me go back and try a different approach.",
+            "Oops, wrong page. Let me go back to where I was before.",
+            "This doesn't look right. I need to find my way back.",
+        ],
+        "type": [
+            "Let me type this in... I hope I'm putting it in the right spot.",
+            "Okay, I'll try entering this information here.",
+        ],
+        "default": [
+            "Hmm, let me think about what to do next...",
+            "I'm looking at this page trying to figure out the layout.",
+            "Let me take a moment to understand what I'm seeing here.",
+        ],
+    },
+    "first_time_user": {
+        "click": [
+            "I think this might be what I'm looking for. Let me click and see.",
+            "Not sure what this does, but I'll try clicking it.",
+            "This looks like it could be the right button. Here goes...",
+            "Let me try this link — it seems relevant to what I need.",
+        ],
+        "scroll": [
+            "Let me scroll down to explore more of this page.",
+            "I wonder what else is on this page. Scrolling to find out...",
+            "Haven't found what I need yet, let me check further down.",
+        ],
+        "zoom": [
+            "The text here is a bit hard to read, let me zoom in.",
+            "I want to get a closer look at this section.",
+        ],
+        "navigate": [
+            "Okay, let me check out this section of the website.",
+            "Going to this page to see if it has what I need.",
+            "First time seeing this part of the site. Let me explore.",
+        ],
+        "search": [
+            "I'm not sure where things are on this site. Let me look around.",
+            "Since I've never been here before, I need to explore the layout.",
+            "Where would they put that? Let me search the page...",
+        ],
+        "confusion": [
+            "Wait, I'm confused. What am I supposed to do here?",
+            "This isn't intuitive at all. I have no idea where to go.",
+            "As a first-time visitor, this layout makes no sense to me.",
+        ],
+        "backtrack": [
+            "That wasn't what I expected. Let me go back and try something else.",
+            "Wrong direction. Heading back to figure out the right path.",
+        ],
+        "type": [
+            "Let me enter this info — hopefully I'm doing this right.",
+            "I'll type this in and see what comes up.",
+        ],
+        "default": [
+            "Interesting... let me figure out how this site is organized.",
+            "Okay, taking in the layout. Where should I go first?",
+            "Let me get my bearings — this is my first time here.",
+        ],
+    },
+}
+
+
+def _get_persona_thought(persona_name: str, action_type: str) -> str:
+    """Get a random persona-appropriate thought for the given action."""
+    # Map persona name to key
+    key = "elderly" if "grandma" in persona_name.lower() else "first_time_user"
+    thoughts = _PERSONA_THOUGHTS.get(key, _PERSONA_THOUGHTS["first_time_user"])
+    options = thoughts.get(action_type, thoughts["default"])
+    return random.choice(options)
+
+
+def _clean_element_ref(target: str) -> str:
+    """Turn raw element references like '#11' or 'element 11' into readable descriptions."""
+    target = target.strip().strip("#'\"")
+    # If it's just a number or 'element N', return a generic description
+    if re.match(r"^\d+$", target):
+        return "a button on the page"
+    if re.match(r"^element\s*\d+$", target, re.IGNORECASE):
+        return "a button on the page"
+    # If it's a CSS selector like div.class or #id, simplify
+    if re.match(r"^[#.\[]", target) or "::" in target:
+        return "an element on the page"
+    return target
+
+
+def _parse_step_summary(raw: str, persona_name: str, elapsed_sec: float) -> list[str] | None:
     """
-    Transform a raw Browser Use lastStepSummary into a human-readable feed entry.
-    Returns None if the step should be filtered out (noise).
+    Transform a raw Browser Use lastStepSummary into human-readable feed entries.
+    Returns a list of log lines (action + thinking), or None if filtered out.
     """
     lower = raw.lower().strip()
 
     # ── Filter out noise ──
     noise_patterns = [
         "getting browser state",
-        "python: import",
-        "python: re.",
-        "python: print",
+        "get browser state",
+        "get page elements",
+        "python:",
         "waiting for",
         "get_browser_state",
         "extract_content",
+        "extract page",
     ]
     for noise in noise_patterns:
         if noise in lower:
@@ -305,53 +428,73 @@ def _parse_step_summary(raw: str, persona_name: str, elapsed_sec: float) -> str 
 
     # ── Parse into readable actions ──
     slow_tag = " [slow]" if elapsed_sec >= 15 else ""
+    action_type = "default"
+    action_line = None
 
     # Clicking
     click_match = re.match(r"click(?:ing|ed)?\s+(?:on\s+)?(?:element\s+)?(.+)", lower, re.IGNORECASE)
     if click_match:
-        target = click_match.group(1).strip().strip("#'\"")
-        return f"{persona_name}: Clicked on {target}{slow_tag}"
+        target = _clean_element_ref(click_match.group(1))
+        action_line = f"{persona_name}: Clicked on {target}{slow_tag}"
+        action_type = "click"
 
     # Typing / Input
-    type_match = re.match(r"(?:typ(?:ing|ed)|input(?:ting)?|fill(?:ing|ed)?)\s+(.+)", lower, re.IGNORECASE)
-    if type_match:
-        target = type_match.group(1).strip()
-        return f"{persona_name}: Typed into {target}"
+    if not action_line:
+        type_match = re.match(r"(?:typ(?:ing|ed)|input(?:ting)?|fill(?:ing|ed)?)\s+(.+)", lower, re.IGNORECASE)
+        if type_match:
+            target = type_match.group(1).strip()
+            action_line = f"{persona_name}: Typed into {target}"
+            action_type = "type"
 
     # Scrolling
-    if "scroll" in lower:
+    if not action_line and "scroll" in lower:
         direction = "down" if "down" in lower else "up" if "up" in lower else ""
-        return f"{persona_name}: Scrolled {direction}{slow_tag}".strip()
+        action_line = f"{persona_name}: Scrolled {direction}{slow_tag}".strip()
+        action_type = "scroll"
 
     # Zooming
-    if "zoom" in lower or "ctrl+plus" in lower or "ctrl+=" in lower or "ctrl++" in lower:
-        return f"{persona_name}: Zoomed in to read content"
+    if not action_line and ("zoom" in lower or "ctrl+plus" in lower or "ctrl+=" in lower or "ctrl++" in lower):
+        action_line = f"{persona_name}: Zoomed in to read content"
+        action_type = "zoom"
 
     # Navigation
-    if "navigat" in lower or "go to" in lower or "goto" in lower or "open" in lower:
-        return f"{persona_name}: Navigating to page"
+    if not action_line and ("navigat" in lower or "go to" in lower or "goto" in lower or "open" in lower):
+        action_line = f"{persona_name}: Navigating to page"
+        action_type = "navigate"
 
     # Page loaded
-    if "page" in lower and ("load" in lower or "ready" in lower):
-        return f"{persona_name}: Page loaded"
+    if not action_line and "page" in lower and ("load" in lower or "ready" in lower):
+        action_line = f"{persona_name}: Page loaded"
+        action_type = "default"
 
     # Searching / looking
-    if "search" in lower or "looking for" in lower or "find" in lower:
-        return f"{persona_name}: Searching the page{slow_tag}"
+    if not action_line and ("search" in lower or "looking for" in lower or "find" in lower):
+        action_line = f"{persona_name}: Searching the page{slow_tag}"
+        action_type = "search"
 
     # Confusion / hesitation signals
-    if any(w in lower for w in ["confus", "hesitat", "stuck", "lost", "unclear", "frustrat", "where"]):
-        return f"{persona_name}: Expressing confusion{slow_tag}"
+    if not action_line and any(w in lower for w in ["confus", "hesitat", "stuck", "lost", "unclear", "frustrat", "where"]):
+        action_line = f"{persona_name}: Expressing confusion{slow_tag}"
+        action_type = "confusion"
 
     # Backtracking
-    if "back" in lower and ("go" in lower or "click" in lower or "press" in lower or "navig" in lower):
-        return f"{persona_name}: Going back (backtracking){slow_tag}"
+    if not action_line and "back" in lower and ("go" in lower or "click" in lower or "press" in lower or "navig" in lower):
+        action_line = f"{persona_name}: Going back (backtracking){slow_tag}"
+        action_type = "backtrack"
 
-    # Generic: if the summary is short enough and not noise, pass it through cleaned up
-    cleaned = raw.strip()
-    if len(cleaned) > 120:
-        cleaned = cleaned[:117] + "..."
-    return f"{persona_name}: {cleaned}{time_tag}{slow_tag}"
+    # Generic fallback
+    if not action_line:
+        cleaned = raw.strip()
+        if len(cleaned) > 150:
+            cleaned = cleaned[:147] + "..."
+        cleaned = re.sub(r"(?:element|#)\s*(\d+)\b", "a page element", cleaned, flags=re.IGNORECASE)
+        action_line = f"{persona_name}: {cleaned}{slow_tag}"
+
+    # Build result: thinking line first, then action
+    thought = _get_persona_thought(persona_name, action_type)
+    thinking_line = f"{persona_name} [thinking]: {thought}"
+
+    return [thinking_line, action_line]
 
 
 async def _run_single_persona(
@@ -396,9 +539,15 @@ async def _run_single_persona(
                 f"1. Navigate to {run.url}\n"
                 f"2. Try to complete the task described above\n"
                 f"3. Stay in character as your persona throughout\n"
-                f"4. Express any confusion, frustration, or difficulty you encounter\n"
-                f"5. Note any UI elements that are hard to use, find, or understand\n"
-                f"6. After attempting the task, provide:\n"
+                f"4. THINK OUT LOUD — before every action, explain WHY you are doing it. "
+                f"For example: 'I see a navigation menu at the top, I'll click the About link to learn more' "
+                f"or 'The text is too small for me to read, I need to zoom in first'\n"
+                f"5. When you click something, describe it by its visible text or purpose, "
+                f"NOT by its element number or CSS selector. Say 'clicking the Submit button' "
+                f"not 'clicking element 14'. Say 'clicking the menu icon' not 'clicking #nav-toggle'.\n"
+                f"6. Express any confusion, frustration, or difficulty you encounter as your persona would\n"
+                f"7. Note any UI elements that are hard to use, find, or understand\n"
+                f"8. After attempting the task, provide:\n"
                 f"   - Whether you completed it successfully (yes/no)\n"
                 f"   - Difficulty rating (1-10)\n"
                 f"   - Specific issues encountered\n"
@@ -448,35 +597,66 @@ async def _run_single_persona(
 
                         # 2. Poll until session completes
                         poll_url = f"{cloud_api_url}/{session_id}"
-                        max_polls = 120  # 10 minutes max (5s intervals)
+                        max_polls = 300  # 10 minutes max (2s intervals)
                         last_step_time = datetime.now()
                         last_step_summary = ""
+                        seen_step_count = 0
+                        logged_api_keys = False
                         for _ in range(max_polls):
-                            await asyncio.sleep(5)
+                            await asyncio.sleep(2)
                             async with session.get(poll_url, headers=headers) as poll_resp:
                                 if poll_resp.status != 200:
                                     continue
                                 poll_data = await poll_resp.json()
 
+                            # Log available API keys once for debugging
+                            if not logged_api_keys:
+                                print(f"[DEBUG] Browser Use API keys for {persona_name}: {list(poll_data.keys())}")
+                                logged_api_keys = True
+
                             status = poll_data.get("status", "")
-                            step_summary = poll_data.get("lastStepSummary", "")
 
-                            if step_summary and step_summary != last_step_summary:
-                                now = datetime.now()
-                                elapsed = (now - last_step_time).total_seconds()
-                                last_step_time = now
-                                last_step_summary = step_summary
+                            # Try to get all steps from the API
+                            steps_list = poll_data.get("steps", []) or []
+                            if isinstance(steps_list, list) and len(steps_list) > seen_step_count:
+                                new_steps = steps_list[seen_step_count:]
+                                seen_step_count = len(steps_list)
+                                for s in new_steps:
+                                    now = datetime.now()
+                                    elapsed = (now - last_step_time).total_seconds()
+                                    last_step_time = now
+                                    # Each step might be a dict or string
+                                    summary = ""
+                                    if isinstance(s, dict):
+                                        summary = s.get("summary", "") or s.get("text", "") or s.get("action", "") or str(s)
+                                    elif isinstance(s, str):
+                                        summary = s
+                                    if summary:
+                                        parsed = _parse_step_summary(summary, persona_name, elapsed)
+                                        if parsed:
+                                            for line in parsed:
+                                                run.log_messages.append(f"[{now.isoformat()}] {line}")
+                                            if on_progress:
+                                                on_progress(run)
 
-                                parsed = _parse_step_summary(step_summary, persona_name, elapsed)
-                                if parsed:
-                                    run.log_messages.append(
-                                        f"[{now.isoformat()}] {parsed}"
-                                    )
-                                    if on_progress:
-                                        on_progress(run)
+                            # Fallback: use lastStepSummary if no steps array
+                            if not steps_list:
+                                step_summary = poll_data.get("lastStepSummary", "")
+                                if step_summary and step_summary != last_step_summary:
+                                    now = datetime.now()
+                                    elapsed = (now - last_step_time).total_seconds()
+                                    last_step_time = now
+                                    last_step_summary = step_summary
+
+                                    parsed = _parse_step_summary(step_summary, persona_name, elapsed)
+                                    if parsed:
+                                        for line in parsed:
+                                            run.log_messages.append(f"[{now.isoformat()}] {line}")
+                                        if on_progress:
+                                            on_progress(run)
 
                             if status in ("stopped", "error", "timed_out"):
-                                task_output = str(poll_data.get("output", "")) or step_summary or "No output"
+                                task_output = str(poll_data.get("output", "")) or poll_data.get("lastStepSummary", "") or "No output"
                                 if status == "error":
                                     run.log_messages.append(
                                         f"[WARN] {persona_name} cloud session errored"
@@ -513,7 +693,7 @@ async def _run_single_persona(
                 )
 
             run.log_messages.append(
-                f"[{datetime.now().isoformat()}] {persona_name} completed: {task.title}"
+                f"[{datetime.now().isoformat()}] [done] {persona_name} completed: {task.title}"
             )
 
             # Extract confusion signals from the output
@@ -564,12 +744,35 @@ async def _run_single_persona(
     result.status = TaskStatus.COMPLETED
     result.end_time = datetime.now()
 
+    # Build brief summary explaining the score
+    summary_parts = []
+    summary_parts.append(
+        f"Completed {result.tasks_completed}/{result.tasks_total} tasks"
+    )
+    if result.confusion_signals:
+        # Count signal types
+        from collections import Counter
+        sig_counts = Counter(s.signal_type for s in result.confusion_signals)
+        top_signals = ", ".join(
+            f"{count} {stype.replace('_', ' ')}" for stype, count in sig_counts.most_common(3)
+        )
+        summary_parts.append(f"hit {len(result.confusion_signals)} confusion points ({top_signals})")
+    else:
+        summary_parts.append("no confusion signals detected")
+
+    # Note failed tasks
+    failed_tasks = [tr["task_title"] for tr in result.task_results if not tr.get("completed")]
+    if failed_tasks:
+        summary_parts.append(f"struggled with: {', '.join(failed_tasks[:2])}")
+
+    score_summary = ". ".join(summary_parts) + "."
+
     # Update progress
     completed_count = sum(1 for r in run.persona_results if r.status == TaskStatus.COMPLETED)
     run.progress = 35.0 + (completed_count / len(run.persona_results)) * 35.0
     run.log_messages.append(
         f"[{datetime.now().isoformat()}] {result.persona_name} finished — "
-        f"Score: {result.overall_score}, Confusions: {len(result.confusion_signals)}"
+        f"Score: {result.overall_score}/100. {score_summary}"
     )
     if on_progress:
         on_progress(run)

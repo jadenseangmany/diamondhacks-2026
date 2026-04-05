@@ -821,6 +821,11 @@ body {
     font-weight: 600;
 }
 
+.log-entry.log-done {
+    color: var(--accent-green);
+    font-weight: 600;
+}
+
 .log-entry.log-confusion {
     color: var(--accent-red);
     font-weight: 600;
@@ -829,6 +834,14 @@ body {
 .log-entry.log-zoom {
     color: var(--accent-cyan);
     font-style: italic;
+}
+
+.log-entry.log-thinking {
+    color: var(--text-secondary);
+    font-style: italic;
+    background: rgba(0, 132, 255, 0.04);
+    border-left: 2px solid var(--primary);
+    padding-left: 10px;
 }
 
 /* ── Fullscreen Toggle ──────────────────────────────────────────────── */
