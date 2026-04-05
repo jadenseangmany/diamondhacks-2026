@@ -655,7 +655,15 @@ async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback 
         f"This will run via a browser extension content script.\n"
         f"- fix_css: CSS rules to inject to fix styling issues (if applicable). "
         f"Use specific selectors targeting the problematic elements. "
-        f"CRITICALLY: ALWAYS append `!important` to EVERY single CSS declaration you write to guarantee it overrides the host website's native frameworks and specificity rules (e.g., `color: #1a1a1a !important;`).\n"
+        f"CRITICALLY: ALWAYS append `!important` to EVERY single CSS declaration you write to guarantee it overrides the host website's native frameworks and specificity rules (e.g., `color: #1a1a1a !important;`).\n\n"
+        f"## IMPORTANT CSS RULES\n"
+        f"- You do NOT know the site's actual computed styles. NEVER use absolute pixel values for font-size, padding, margin, width, height, gap, etc.\n"
+        f"- ALWAYS use RELATIVE adjustments that scale from the existing values:\n"
+        f"  - To increase font size: use `font-size: 120% !important;` or `font-size: 1.2em !important;` (NOT `font-size: 18px`)\n"
+        f"  - To increase spacing: use `padding: 1.5em !important;` or `margin-bottom: 1.5em !important;` (NOT `padding: 24px`)\n"
+        f"  - To increase line height: use `line-height: 1.6 !important;` (unitless relative value)\n"
+        f"  - For transforms/scaling: use `transform: scale(1.1)` to make things bigger\n"
+        f"- The site may already have large fonts (30px+). Writing `font-size: 18px` would SHRINK text. Relative units like `120%` or `1.2em` always increase FROM the current value.\n"
     )
 
     response = await _llm_call(
@@ -687,6 +695,7 @@ async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback 
         run.suggested_edits = [SuggestedEdit(**e) for e in edits_data]
     except (json.JSONDecodeError, Exception) as e:
         run.log_messages.append(f"[WARN] Failed to parse edit suggestions: {e}")
+        run.log_messages.append(f"[DEBUG] Raw LLM response (first 500 chars): {response[:500] if response else '(empty)'}")
         run.suggested_edits = [
             SuggestedEdit(
                 description="Could not generate specific suggestions. Review the persona feedback manually.",
