@@ -7,10 +7,16 @@
     "activeTab",
     "storage",
     "scripting",
-    "tabs"
+    "tabs",
+    "sidePanel"
   ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "side_panel": {
+    "default_path": "panel/panel.html"
+  },
   "action": {
-    "default_popup": "popup/popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",

@@ -21,6 +21,7 @@ class RunStatus(str, Enum):
     EXECUTING = "executing"
     ANALYZING = "analyzing"
     SUGGESTING = "suggesting"
+    VALIDATING_EDITS = "validating_edits"
     AWAITING_APPROVAL = "awaiting_approval"
     APPLYING_EDITS = "applying_edits"
     REGRESSION_TESTING = "regression_testing"
@@ -28,20 +29,7 @@ class RunStatus(str, Enum):
     FAILED = "failed"
 
 
-class PersonaType(str, Enum):
-    ELDERLY = "elderly"
-    FIRST_TIME = "first_time"
-    ADHD = "adhd"
-    NON_NATIVE = "non_native"
-    MOBILE = "mobile"
-    POWER_USER = "power_user"
-    VISUALLY_IMPAIRED = "visually_impaired"
-    LOW_TECH = "low_tech"
-    BUSY_PROFESSIONAL = "busy_professional"
-    TEEN = "teen"
-    ADVERSARIAL = "adversarial"
-
-
+# Removed PersonaType Enum to allow custom string IDs
 class TaskStatus(str, Enum):
     PENDING = "pending"
     IN_PROGRESS = "in_progress"
@@ -80,7 +68,7 @@ class UsabilityTask(BaseModel):
 
 class PersonaResult(BaseModel):
     """Results from a single persona's usability testing session."""
-    persona_type: PersonaType
+    persona_type: str
     persona_name: str = ""
     tasks_completed: int = 0
     tasks_failed: int = 0
@@ -90,6 +78,8 @@ class PersonaResult(BaseModel):
     feedback: str = ""
     suggestions: list[str] = []
     status: TaskStatus = TaskStatus.PENDING
+    live_url: str = ""
+    cloud_session_id: str = ""
     start_time: Optional[datetime] = None
     end_time: Optional[datetime] = None
     task_results: list[dict] = []  # per-task results

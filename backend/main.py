@@ -20,7 +20,7 @@ from models import RunStatus, TestRun
 from personas import get_all_personas
 from pipeline import run_pipeline, step_apply_edits, step_regression_test
 
-load_dotenv()
+load_dotenv(override=True)
 
 
 # ── In-memory store ──────────────────────────────────────────────────────────
@@ -59,7 +59,7 @@ app.add_middleware(
 
 class TestRequest(BaseModel):
     url: str
-    personas: list[str] = []  # e.g. ["elderly", "first_time"]
+    personas: list[Any] = []  # Can perfectly handle string keys or custom dict payloads
     num_tasks: int = 2  # Number of usability testing tasks to generate
 
 

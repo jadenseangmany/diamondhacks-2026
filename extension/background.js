@@ -5,6 +5,20 @@
 
 const API_BASE = 'http://localhost:8000';
 
+// Open side panel on extension icon click (Chrome)
+chrome.runtime.onInstalled.addListener(() => {
+    if (chrome.sidePanel) {
+        chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch((error) => console.error(error));
+    }
+});
+
+// Explicit click handler (Arc Browser fallback)
+chrome.action.onClicked.addListener((tab) => {
+    if (chrome.sidePanel && tab && tab.windowId) {
+        chrome.sidePanel.open({ windowId: tab.windowId });
+    }
+});
+
 // Listen for messages from popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'evaluate') {

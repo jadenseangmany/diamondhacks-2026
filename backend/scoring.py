@@ -133,7 +133,7 @@ def build_heatmap(
             data["total_severity"] += signal.severity
             data["signal_count"] += 1
             data["signal_types"].add(signal.signal_type)
-            data["personas"].add(result.persona_type.value)
+            data["personas"].add(result.persona_type)
             if signal.page_url:
                 data["page_url"] = signal.page_url
 
@@ -201,7 +201,7 @@ def compute_overall_scores(
         return {"usability": 0, "accessibility": 0, "clarity": 0}
 
     # Filter out adversarial agent for overall scoring
-    standard_results = [r for r in persona_results if r.persona_type.value != "adversarial"]
+    standard_results = [r for r in persona_results if r.persona_type != "adversarial"]
     if not standard_results:
         standard_results = persona_results
 

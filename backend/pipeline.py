@@ -15,18 +15,19 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import traceback
 from datetime import datetime
 from typing import Callable, Optional
 
 from dotenv import load_dotenv
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 from models import (
     ConfusionSignal,
     HeatmapEntry,
     PersonaResult,
-    PersonaType,
     RegressionResult,
     RunStatus,
     SuggestedEdit,
@@ -34,7 +35,7 @@ from models import (
     TestRun,
     UsabilityTask,
 )
-from personas import PERSONAS, get_persona_prompt, get_persona_name, get_persona_info, ACTIVE_PERSONAS
+from personas import PERSONAS, ACTIVE_PERSONAS
 from scoring import (
     build_heatmap,
     compute_overall_scores,
@@ -42,11 +43,10 @@ from scoring import (
     extract_confusion_signals,
 )
 
-load_dotenv()
+load_dotenv(override=True)
 
-# Initialize Gemini client for summarization / task gen
-genai.configure(api_key=os.getenv("GOOGLE_API_KEY", "placeholder"))
-gemini_model = genai.GenerativeModel("gemini-3-flash-preview")
+# Initialize new google.genai client
+gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY", "placeholder"))
 
 
 # Type for progress callback
@@ -59,16 +59,18 @@ async def _llm_call(system: str, user: str, json_mode: bool = False) -> str:
     if json_mode:
         prompt += "\n\nIMPORTANT: Respond ONLY with valid JSON, no markdown fences."
 
-    generation_config = genai.types.GenerationConfig(
-        temperature=0.7,
-        max_output_tokens=4000,
-    )
+    config_kwargs = {
+        "temperature": 0.7,
+        "max_output_tokens": 4000,
+    }
+    
     if json_mode:
-        generation_config.response_mime_type = "application/json"
+        config_kwargs["response_mime_type"] = "application/json"
 
-    response = await gemini_model.generate_content_async(
-        prompt,
-        generation_config=generation_config,
+    response = await gemini_client.aio.models.generate_content(
+        model="gemini-3-flash-preview",
+        contents=prompt,
+        config=types.GenerateContentConfig(**config_kwargs)
     )
     return response.text or ""
 
@@ -234,14 +236,20 @@ async def step_execute_personas(run: TestRun, on_progress: ProgressCallback = No
     if on_progress:
         on_progress(run)
 
-    persona_types = selected_personas if selected_personas else ACTIVE_PERSONAS
+    persona_list = selected_personas if selected_personas else ACTIVE_PERSONAS
 
     # Initialize persona results
     run.persona_results = []
-    for ptype in persona_types:
+    for p_info in persona_list:
+        # If it's a built-in key string (e.g. 'elderly'), expand it
+        if isinstance(p_info, dict):
+            p_dict = p_info
+        else:
+            p_dict = PERSONAS.get(p_info, PERSONAS["elderly"])
+
         result = PersonaResult(
-            persona_type=ptype,
-            persona_name=get_persona_name(ptype),
+            persona_type=p_dict.get("type", "custom"),
+            persona_name=p_dict.get("name", "Custom User"),
             tasks_total=len(run.tasks),
             status=TaskStatus.PENDING,
         )
@@ -250,11 +258,16 @@ async def step_execute_personas(run: TestRun, on_progress: ProgressCallback = No
     if on_progress:
         on_progress(run)
 
-    # Run all personas in parallel
     tasks = []
-    for i, ptype in enumerate(persona_types):
+    for i, p_info in enumerate(persona_list):
+        if isinstance(p_info, dict):
+            p_dict = p_info
+        else:
+            p_dict = PERSONAS.get(p_info, PERSONAS["elderly"])
+            p_dict["type"] = p_info
+            
         tasks.append(
-            _run_single_persona(run, i, ptype, on_progress)
+            _run_single_persona(run, i, p_dict, on_progress)
         )
 
     await asyncio.gather(*tasks, return_exceptions=True)
@@ -270,31 +283,27 @@ async def step_execute_personas(run: TestRun, on_progress: ProgressCallback = No
 async def _run_single_persona(
     run: TestRun,
     index: int,
-    persona_type: PersonaType,
+    persona_dict: dict,
     on_progress: ProgressCallback = None,
 ) -> None:
-    """Run a single persona agent through all tasks."""
+    """Run a single persona agent through all tasks via Browser Use Cloud API."""
+    import aiohttp
+
     result = run.persona_results[index]
     result.status = TaskStatus.IN_PROGRESS
     result.start_time = datetime.now()
 
-    persona_info = get_persona_info(persona_type)
-    persona_prompt = persona_info["system_prompt"]
-    persona_name = persona_info["name"]
-    persona_emoji = persona_info["emoji"]
+    persona_prompt = persona_dict.get("system_prompt", "You are a user testing this website.")
+    persona_name = persona_dict.get("name", "Custom User")
+    persona_emoji = persona_dict.get("emoji", "🧑")
 
     run.log_messages.append(f"[{datetime.now().isoformat()}] {persona_emoji} Starting persona: {persona_name}")
     if on_progress:
         on_progress(run)
 
     all_feedback = []
-
-    # ── Window positioning: side-by-side ──
-    # Grandma (elderly, index=0) → left half; Gen-Z (first_time, index=1) → right half
-    window_width = 960
-    window_height = 800
-    window_x = index * window_width
-    window_y = 0
+    bu_api_key = os.getenv("BROWSER_USE_API_KEY", "")
+    cloud_api_url = "https://api.browser-use.com/api/v3/sessions"
 
     for task in run.tasks:
         try:
@@ -323,66 +332,84 @@ async def _run_single_persona(
                 f"   - Suggestions for improvement\n"
             )
 
-            try:
-                from browser_use import Agent, Browser
+            task_output = ""
 
-                browser = Browser(
-                    headless=False,
-                    window_size={"width": window_width, "height": window_height},
-                    window_position={"width": window_x, "height": window_y},
-                )
-                agent = Agent(
-                    task=task_prompt,
-                    llm=_get_browser_use_llm(),
-                    browser=browser,
-                    max_steps=10,
-                )
-
-                # Inject persona annotation label after browser opens
+            # ── Cloud API execution ──
+            if bu_api_key:
                 try:
-                    context = await browser.get_browser_context()
-                    pages = context.pages
-                    if pages:
-                        await pages[0].evaluate(f"""
-                            (() => {{
-                                const label = document.createElement('div');
-                                label.id = 'agentux-persona-label';
-                                label.style.cssText = `
-                                    position: fixed;
-                                    top: 8px;
-                                    left: 8px;
-                                    z-index: 999999;
-                                    background: {'#a78bfa' if persona_type.value == 'elderly' else '#22d3ee'};
-                                    color: white;
-                                    padding: 6px 14px;
-                                    border-radius: 20px;
-                                    font-family: -apple-system, sans-serif;
-                                    font-size: 14px;
-                                    font-weight: 700;
-                                    box-shadow: 0 2px 12px rgba(0,0,0,0.3);
-                                    pointer-events: none;
-                                `;
-                                label.textContent = '{persona_emoji} {persona_name}';
-                                document.body.appendChild(label);
-                            }})();
-                        """)
-                except Exception:
-                    pass  # Annotation is nice-to-have, don't block on it
+                    import ssl as _ssl
+                    ssl_ctx = _ssl.create_default_context()
+                    ssl_ctx.check_hostname = False
+                    ssl_ctx.verify_mode = _ssl.CERT_NONE
+                    connector = aiohttp.TCPConnector(ssl=ssl_ctx)
+                    async with aiohttp.ClientSession(connector=connector) as session:
+                        # 1. Create cloud session with task
+                        create_payload = {
+                            "task": task_prompt,
+                            "model": "gemini-3-flash",
+                        }
+                        headers = {
+                            "X-Browser-Use-API-Key": bu_api_key,
+                            "Content-Type": "application/json",
+                        }
 
-                agent_result = await agent.run()
-                task_output = agent_result.final_result() if hasattr(agent_result, 'final_result') else str(agent_result)
+                        async with session.post(cloud_api_url, json=create_payload, headers=headers) as resp:
+                            if resp.status not in (200, 201):
+                                error_text = await resp.text()
+                                raise Exception(f"Cloud API returned {resp.status}: {error_text}")
+                            session_data = await resp.json()
 
-                run.log_messages.append(
-                    f"[{datetime.now().isoformat()}] {persona_emoji} {persona_name} completed: {task.title}"
-                )
+                        session_id = session_data.get("id", "")
+                        live_url = session_data.get("liveUrl", "")
 
-                try:
-                    await browser.close()
-                except Exception:
-                    pass  # Browser may already be closed
-            except Exception as e:
-                run.log_messages.append(f"[WARN] Browser agent failed for {result.persona_name}/{task.title}: {e}")
-                # LLM fallback for demo
+                        # Store live URL on the persona result for frontend embedding
+                        result.live_url = live_url or ""
+                        result.cloud_session_id = session_id
+
+                        run.log_messages.append(
+                            f"[{datetime.now().isoformat()}] {persona_emoji} {persona_name} cloud session: {session_id[:8]}... | Live URL: {live_url[:80] if live_url else 'NONE'}"
+                        )
+                        print(f"[DEBUG] Cloud API response for {persona_name}: liveUrl={live_url}, sessionId={session_id}")
+                        if on_progress:
+                            on_progress(run)
+
+                        # 2. Poll until session completes
+                        poll_url = f"{cloud_api_url}/{session_id}"
+                        max_polls = 120  # 10 minutes max (5s intervals)
+                        for _ in range(max_polls):
+                            await asyncio.sleep(5)
+                            async with session.get(poll_url, headers=headers) as poll_resp:
+                                if poll_resp.status != 200:
+                                    continue
+                                poll_data = await poll_resp.json()
+
+                            status = poll_data.get("status", "")
+                            step_summary = poll_data.get("lastStepSummary", "")
+
+                            if step_summary:
+                                run.log_messages.append(
+                                    f"[{datetime.now().isoformat()}] {persona_emoji} {persona_name}: {step_summary}"
+                                )
+                                if on_progress:
+                                    on_progress(run)
+
+                            if status in ("stopped", "error", "timed_out"):
+                                task_output = str(poll_data.get("output", "")) or step_summary or "No output"
+                                if status == "error":
+                                    run.log_messages.append(
+                                        f"[WARN] {persona_name} cloud session errored"
+                                    )
+                                break
+                        else:
+                            task_output = "Cloud session timed out after polling limit"
+                            run.log_messages.append(f"[WARN] {persona_name} cloud session polling timed out")
+
+                except Exception as e:
+                    run.log_messages.append(f"[WARN] Cloud API failed for {persona_name}/{task.title}: {e}")
+                    bu_api_key = ""  # Fall through to LLM fallback below
+
+            # ── LLM fallback if no Cloud API key or Cloud API failed ──
+            if not task_output:
                 task_output = await _llm_call(
                     system=(
                         f"You are performing a usability test. {persona_prompt}\n\n"
@@ -403,9 +430,13 @@ async def _run_single_persona(
                     ),
                 )
 
+            run.log_messages.append(
+                f"[{datetime.now().isoformat()}] {persona_emoji} {persona_name} completed: {task.title}"
+            )
+
             # Extract confusion signals from the output
             signals = extract_confusion_signals(
-                task_output, persona_type.value, run.url
+                task_output, persona_dict.get("type", "custom"), run.url
             )
             result.confusion_signals.extend(signals)
 
@@ -541,7 +572,8 @@ async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback 
         f"(use document.querySelectorAll to find elements and modify their styles/content). "
         f"This will run via a browser extension content script.\n"
         f"- fix_css: CSS rules to inject to fix styling issues (if applicable). "
-        f"Use specific selectors targeting the problematic elements.\n"
+        f"Use specific selectors targeting the problematic elements. "
+        f"CRITICALLY: ALWAYS append `!important` to EVERY single CSS declaration you write to guarantee it overrides the host website's native frameworks and specificity rules (e.g., `color: #1a1a1a !important;`).\n"
     )
 
     response = await _llm_call(
@@ -556,6 +588,20 @@ async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback 
     try:
         data = json.loads(response)
         edits_data = data.get("edits", [])
+        
+        # Sanitize markdown from raw code blocks
+        for e in edits_data:
+            if e.get("fix_js"):
+                code = e["fix_js"]
+                code = re.sub(r"^```[a-z]*\n", "", code, flags=re.IGNORECASE)
+                code = re.sub(r"\n```$", "", code)
+                e["fix_js"] = code
+            if e.get("fix_css"):
+                code = e["fix_css"]
+                code = re.sub(r"^```[a-z]*\n", "", code, flags=re.IGNORECASE)
+                code = re.sub(r"\n```$", "", code)
+                e["fix_css"] = code
+                
         run.suggested_edits = [SuggestedEdit(**e) for e in edits_data]
     except (json.JSONDecodeError, Exception) as e:
         run.log_messages.append(f"[WARN] Failed to parse edit suggestions: {e}")
@@ -567,11 +613,80 @@ async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback 
             )
         ]
 
-    run.status = RunStatus.AWAITING_APPROVAL
-    run.progress = 90.0
+    run.status = RunStatus.VALIDATING_EDITS
+    run.progress = 85.0
     run.log_messages.append(
         f"[{datetime.now().isoformat()}] Generated {len(run.suggested_edits)} improvement suggestions"
     )
+    if on_progress:
+        on_progress(run)
+
+    return run
+
+
+# ── Step 6.5: Validate Edits Visually ─────────────────────────────────────────
+
+async def step_validate_edits(run: TestRun, on_progress: ProgressCallback = None) -> TestRun:
+    """Uses Playwright to physically inject AI code and verify it renders visual changes."""
+    run.status = RunStatus.VALIDATING_EDITS
+    run.current_step = "Step 6.5: Validating edits on live DOM..."
+    if on_progress:
+        on_progress(run)
+
+    valid_edits = []
+    
+    from playwright.async_api import async_playwright
+    
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            for edit in run.suggested_edits:
+                context = await browser.new_context()
+                page = await context.new_page()
+                
+                run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation] Testing edit: {edit.description[:50]}...")
+                if on_progress: on_progress(run)
+                
+                try:
+                    await page.goto(run.url, wait_until="networkidle", timeout=15000)
+                    await page.wait_for_timeout(500)
+                    
+                    # Screenshot BEFORE
+                    before_bytes = await page.screenshot(type="jpeg", quality=40)
+                    
+                    # Inject changes
+                    if edit.fix_css:
+                        await page.add_style_tag(content=edit.fix_css)
+                    if edit.fix_js:
+                        await page.evaluate(edit.fix_js)
+                        
+                    await page.wait_for_timeout(800)
+                    
+                    # Screenshot AFTER
+                    after_bytes = await page.screenshot(type="jpeg", quality=40)
+                    
+                    # Byte-differential check to ensure pixel changes occurred!
+                    if before_bytes == after_bytes:
+                        run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation Failed] Edit produced zero visual change, dropping.")
+                    else:
+                        valid_edits.append(edit)
+                        run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation OK] Edit visually rendered.")
+                        
+                except Exception as e:
+                    run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation Failed] Edit crashed the browser DOM: {str(e)[:100]}")
+                    
+                await context.close()
+                
+            await browser.close()
+    except Exception as e:
+        run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation System Error] Playwright suite failed gracefully: {str(e)[:100]}")
+        valid_edits = run.suggested_edits # Fallback to everything if playwright crashes entirely
+        
+    # Overwrite with only proven edits
+    run.suggested_edits = valid_edits
+    
+    run.status = RunStatus.AWAITING_APPROVAL
+    run.progress = 90.0
     if on_progress:
         on_progress(run)
 
@@ -703,25 +818,17 @@ async def run_pipeline(
         run = await step_generate_tasks(run, on_progress, num_tasks=num_tasks)
 
         # Step 3-4: Execute with all personas in parallel
-        # Convert string persona names to PersonaType enums
-        persona_list = None
-        if selected_personas:
-            from models import PersonaType
-            persona_list = []
-            for p in selected_personas:
-                try:
-                    persona_list.append(PersonaType(p))
-                except ValueError:
-                    run.log_messages.append(f"[WARN] Unknown persona: {p}")
-            if not persona_list:
-                persona_list = None  # Fall back to defaults
-        run = await step_execute_personas(run, on_progress, persona_list)
+        # selected_personas now contains dict payloads for custom personas or string IDs for defaults
+        run = await step_execute_personas(run, on_progress, selected_personas)
 
         # Step 5: Analyze and build heatmap
         run = await step_analyze(run, on_progress)
 
         # Step 6: Suggest improvements
         run = await step_suggest_improvements(run, on_progress)
+
+        # Step 6.5: Validate Edits Visually
+        run = await step_validate_edits(run, on_progress)
 
         if stop_before_edits:
             # Stop here and wait for human approval
