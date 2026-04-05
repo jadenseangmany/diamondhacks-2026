@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AgentUX</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo-icon">✦</div>
+            <h1>AgentUX</h1>
+        </div>
+        <span class="badge">AI UX Tester</span>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main">
+        <!-- Evaluate Section -->
+        <section id="evaluateSection">
+            <div class="current-page">
+                <span class="page-label">Current Page</span>
+                <span class="page-url" id="pageUrl">Loading...</span>
+            </div>
+
+            <div class="persona-picker">
+                <div class="persona-picker-label">
+                    <span>Select Personas</span>
+                    <span class="persona-count" id="personaCount">2 selected</span>
+                </div>
+                <div class="persona-chips" id="personaChips">
+                    <button type="button" class="persona-chip active" data-persona="elderly">
+                        <span class="chip-icon grandma-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round"><circle cx="6" cy="10" r="3"/><circle cx="18" cy="10" r="3"/><path d="M3 10h18"/><path d="M9 10h6"/></svg></span>
+                        <span class="chip-name">Grandma</span>
+                    </button>
+                    <button type="button" class="persona-chip active" data-persona="first_time">
+                        <span class="chip-icon genz-icon"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg></span>
+                        <span class="chip-name">Gen-Z Kid</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="task-count-picker">
+                <div class="task-count-label">
+                    <span>Number of Tasks</span>
+                    <span class="task-count-value" id="taskCountValue">2</span>
+                </div>
+                <div class="task-count-btns">
+                    <button type="button" class="task-count-btn" id="taskCountDown">−</button>
+                    <input type="range" id="taskCountRange" min="1" max="5" value="2" step="1">
+                    <button type="button" class="task-count-btn" id="taskCountUp">+</button>
+                </div>
+            </div>
+
+            <button class="btn-evaluate" id="evaluateBtn">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <span>Evaluate This Page</span>
+            </button>
+        </section>
+
+        <!-- Progress Section (hidden initially) -->
+        <section id="progressSection" style="display:none;">
+            <div class="progress-header">
+                <span class="progress-label" id="progressLabel">Starting agents...</span>
+                <span class="progress-percent" id="progressPercent">0%</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progressFill"></div>
+            </div>
+            <div class="agent-status" id="agentStatus"></div>
+            <div class="live-log" id="liveLog">
+                <div class="live-log-header">
+                    <span>Live Agent Feed</span>
+                </div>
+                <div class="live-log-entries" id="liveLogEntries"></div>
+            </div>
+        </section>
+
+        <!-- Results Section (hidden initially) -->
+        <section id="resultsSection" style="display:none;">
+            <div class="results-header">
+                <h2>Issues Found</h2>
+                <span class="issue-count" id="issueCount">0</span>
+            </div>
+            <div class="issues-list" id="issuesList"></div>
+
+            <!-- Deploy Section -->
+            <div class="deploy-section" id="deploySection" style="display:none;">
+                <div class="deploy-header">
+                    <h3>Deploy Changes</h3>
+                    <p>Copy this prompt and paste it into Claude Code or your agentic IDE</p>
+                </div>
+                <pre class="deploy-prompt" id="deployPrompt"></pre>
+                <button class="btn-copy" id="copyPromptBtn">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    Copy Prompt
+                </button>
+            </div>
+        </section>
+    </main>
+
+    <script src="popup.js"></script>
+</body>
+</html>
