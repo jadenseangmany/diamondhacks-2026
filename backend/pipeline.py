@@ -535,6 +535,20 @@ async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback 
     if on_progress:
         on_progress(run)
 
+    # Fetch actual page HTML so the LLM can write accurate selectors
+    import httpx
+
+    page_html = ""
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=15.0) as client:
+            resp = await client.get(run.url)
+            page_html = resp.text
+            # Truncate to fit context — keep the first chunk with structure intact
+            page_html = page_html[:12000]
+            run.log_messages.append(f"[{datetime.now().isoformat()}] Fetched {len(page_html)} chars of page HTML for edit generation")
+    except Exception as e:
+        run.log_messages.append(f"[WARN] Could not fetch page HTML for edit generation: {e}")
+
     # Compile all feedback
     feedback_summary = []
     for result in run.persona_results:
@@ -551,6 +565,13 @@ async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback 
         for h in run.heatmap[:10]
     )
 
+    html_section = ""
+    if page_html:
+        html_section = (
+            f"## Actual Page HTML (use this to write accurate CSS selectors and JS code)\n"
+            f"```html\n{page_html}\n```\n\n"
+        )
+
     prompt = (
         f"Based on the usability testing results below, suggest specific improvements "
         f"for the website at {run.url}.\n\n"
@@ -560,6 +581,7 @@ async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback 
         f"- Usability: {run.overall_usability_score}/100\n"
         f"- Accessibility: {run.accessibility_score}/100\n"
         f"- Clarity: {run.clarity_score}/100\n\n"
+        f"{html_section}"
         f"Return a JSON object with an 'edits' array. Each edit should have:\n"
         f"- description: what to change\n"
         f"- rationale: why this change will help\n"
@@ -573,13 +595,17 @@ async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback 
         f"This will run via a browser extension content script.\n"
         f"- fix_css: CSS rules to inject to fix styling issues (if applicable). "
         f"Use specific selectors targeting the problematic elements. "
-        f"CRITICALLY: ALWAYS append `!important` to EVERY single CSS declaration you write to guarantee it overrides the host website's native frameworks and specificity rules (e.g., `color: #1a1a1a !important;`).\n"
+        f"CRITICALLY: ALWAYS append `!important` to EVERY single CSS declaration you write to guarantee it overrides the host website's native frameworks and specificity rules (e.g., `color: #1a1a1a !important;`).\n\n"
+        f"IMPORTANT: You MUST use CSS selectors and element references that actually exist in the page HTML above. "
+        f"Do NOT guess selectors. Look at the actual HTML structure and use the real class names, IDs, and tag hierarchy. "
+        f"Every fix_js and fix_css MUST target elements that exist in the HTML.\n"
     )
 
     response = await _llm_call(
         system=(
             "You are a senior UX engineer who provides specific, actionable website improvements. "
-            "Focus on concrete code/content changes, not vague recommendations."
+            "Focus on concrete code/content changes, not vague recommendations. "
+            "You are given the actual page HTML — use it to write precise CSS selectors and JS that will work."
         ),
         user=prompt,
         json_mode=True,
@@ -627,66 +653,148 @@ async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback 
 # ── Step 6.5: Validate Edits Visually ─────────────────────────────────────────
 
 async def step_validate_edits(run: TestRun, on_progress: ProgressCallback = None) -> TestRun:
-    """Uses Playwright to physically inject AI code and verify it renders visual changes."""
+    """Uses Playwright to physically inject AI code and verify it renders visual changes.
+    Failed edits get one retry with the actual page DOM fed back to the LLM."""
     run.status = RunStatus.VALIDATING_EDITS
     run.current_step = "Step 6.5: Validating edits on live DOM..."
     if on_progress:
         on_progress(run)
 
     valid_edits = []
-    
+    failed_edits = []
+
     from playwright.async_api import async_playwright
-    
+
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
+
+            # ── First pass: validate all edits ──
+            page_html = ""
             for edit in run.suggested_edits:
                 context = await browser.new_context()
                 page = await context.new_page()
-                
+
                 run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation] Testing edit: {edit.description[:50]}...")
                 if on_progress: on_progress(run)
-                
+
                 try:
                     await page.goto(run.url, wait_until="networkidle", timeout=15000)
                     await page.wait_for_timeout(500)
-                    
+
+                    # Capture page HTML on first edit for retry context
+                    if not page_html:
+                        page_html = await page.content()
+                        page_html = page_html[:10000]
+
                     # Screenshot BEFORE
                     before_bytes = await page.screenshot(type="jpeg", quality=40)
-                    
+
                     # Inject changes
                     if edit.fix_css:
                         await page.add_style_tag(content=edit.fix_css)
                     if edit.fix_js:
                         await page.evaluate(edit.fix_js)
-                        
+
                     await page.wait_for_timeout(800)
-                    
+
                     # Screenshot AFTER
                     after_bytes = await page.screenshot(type="jpeg", quality=40)
-                    
-                    # Byte-differential check to ensure pixel changes occurred!
+
                     if before_bytes == after_bytes:
-                        run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation Failed] Edit produced zero visual change, dropping.")
+                        run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation Failed] Edit produced zero visual change, queuing retry...")
+                        failed_edits.append(edit)
                     else:
                         valid_edits.append(edit)
                         run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation OK] Edit visually rendered.")
-                        
+
                 except Exception as e:
-                    run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation Failed] Edit crashed the browser DOM: {str(e)[:100]}")
-                    
+                    run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation Failed] Edit crashed DOM: {str(e)[:100]}, queuing retry...")
+                    failed_edits.append(edit)
+
                 await context.close()
-                
+
+            # ── Retry pass: ask LLM to rewrite failed fixes with actual DOM ──
+            if failed_edits and page_html:
+                run.log_messages.append(
+                    f"[{datetime.now().isoformat()}] [Validation] Retrying {len(failed_edits)} failed edit(s) with actual page DOM..."
+                )
+                if on_progress: on_progress(run)
+
+                for edit in failed_edits:
+                    retry_prompt = (
+                        f"An edit fix for the website at {run.url} failed visual validation — "
+                        f"the CSS/JS code did not produce any visible change on the page.\n\n"
+                        f"## Edit description\n{edit.description}\n\n"
+                        f"## Original fix_css (FAILED — selectors did not match or had no effect)\n"
+                        f"```css\n{edit.fix_css}\n```\n\n"
+                        f"## Original fix_js (FAILED — selectors did not match or had no effect)\n"
+                        f"```js\n{edit.fix_js}\n```\n\n"
+                        f"## Actual page HTML (use this to find the correct selectors)\n"
+                        f"```html\n{page_html}\n```\n\n"
+                        f"Rewrite ONLY the fix_css and fix_js so they target elements that actually exist "
+                        f"in the HTML above. Use the real class names, IDs, and tag structure.\n"
+                        f"CRITICALLY: Append `!important` to EVERY CSS declaration.\n\n"
+                        f"Return a JSON object with exactly two keys: \"fix_css\" and \"fix_js\"."
+                    )
+
+                    try:
+                        retry_response = await _llm_call(
+                            system="You are a frontend engineer. Fix the broken CSS/JS selectors using the actual page HTML provided.",
+                            user=retry_prompt,
+                            json_mode=True,
+                        )
+                        retry_data = json.loads(retry_response)
+                        new_css = retry_data.get("fix_css", "")
+                        new_js = retry_data.get("fix_js", "")
+
+                        # Strip markdown fences
+                        new_css = re.sub(r"^```[a-z]*\n", "", new_css, flags=re.IGNORECASE)
+                        new_css = re.sub(r"\n```$", "", new_css)
+                        new_js = re.sub(r"^```[a-z]*\n", "", new_js, flags=re.IGNORECASE)
+                        new_js = re.sub(r"\n```$", "", new_js)
+
+                        # Validate the retry
+                        context = await browser.new_context()
+                        page = await context.new_page()
+                        await page.goto(run.url, wait_until="networkidle", timeout=15000)
+                        await page.wait_for_timeout(500)
+
+                        before_bytes = await page.screenshot(type="jpeg", quality=40)
+
+                        if new_css:
+                            await page.add_style_tag(content=new_css)
+                        if new_js:
+                            await page.evaluate(new_js)
+
+                        await page.wait_for_timeout(800)
+                        after_bytes = await page.screenshot(type="jpeg", quality=40)
+
+                        await context.close()
+
+                        if before_bytes != after_bytes:
+                            edit.fix_css = new_css
+                            edit.fix_js = new_js
+                            valid_edits.append(edit)
+                            run.log_messages.append(f"[{datetime.now().isoformat()}] [Retry OK] Edit now renders: {edit.description[:50]}")
+                        else:
+                            run.log_messages.append(f"[{datetime.now().isoformat()}] [Retry Failed] Still no visual change, dropping: {edit.description[:50]}")
+                    except Exception as e:
+                        run.log_messages.append(f"[{datetime.now().isoformat()}] [Retry Error] {str(e)[:100]}")
+
             await browser.close()
     except Exception as e:
-        run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation System Error] Playwright suite failed gracefully: {str(e)[:100]}")
-        valid_edits = run.suggested_edits # Fallback to everything if playwright crashes entirely
-        
+        run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation System Error] Playwright suite failed: {str(e)[:100]}")
+        valid_edits = run.suggested_edits  # Fallback to everything if playwright crashes entirely
+
     # Overwrite with only proven edits
     run.suggested_edits = valid_edits
-    
+
     run.status = RunStatus.AWAITING_APPROVAL
     run.progress = 90.0
+    run.log_messages.append(
+        f"[{datetime.now().isoformat()}] Validation complete: {len(valid_edits)} edit(s) passed"
+    )
     if on_progress:
         on_progress(run)
 

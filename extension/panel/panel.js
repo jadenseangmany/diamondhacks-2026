@@ -20,11 +20,59 @@ let currentUrl = '';
 let currentRunId = null;
 let pollInterval = null;
 let issues = [];
+let fullscreenPreviewActive = false;
+let lastLivePreviews = []; // track current live URLs for fullscreen mode
+let activeTabId = null; // tab ID for content script messages, kept in sync
+
+// ── Tab helpers ─────────────────────────────────────────────────────────────
+async function getActiveTab() {
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        if (tab && tab.id) {
+            activeTabId = tab.id;
+            return tab;
+        }
+    } catch (e) { /* ignore */ }
+    // Fallback: try currentWindow
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab && tab.id) {
+            activeTabId = tab.id;
+            return tab;
+        }
+    } catch (e) { /* ignore */ }
+    return null;
+}
+
+function sendToActiveTab(message) {
+    if (!activeTabId) {
+        console.warn('[AgentUX] No activeTabId, cannot send message:', message.type);
+        return;
+    }
+    chrome.tabs.sendMessage(activeTabId, message, () => {
+        // Suppress "Receiving end does not exist" errors
+        if (chrome.runtime.lastError) {
+            console.warn('[AgentUX] sendMessage error:', chrome.runtime.lastError.message);
+        }
+    });
+}
+
+// Keep activeTabId in sync when user switches tabs
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    activeTabId = activeInfo.tabId;
+    // If fullscreen preview is on, re-send it to the new tab
+    // (the new tab won't have the overlay since it's a different page)
+    // So we turn it off when switching tabs
+    if (fullscreenPreviewActive) {
+        fullscreenPreviewActive = false;
+        document.getElementById('fullscreenToggle').checked = false;
+    }
+});
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
     // Get current tab URL
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getActiveTab();
     if (tab) {
         currentUrl = tab.url;
         document.getElementById('pageUrl').textContent = currentUrl;
@@ -116,6 +164,25 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     document.getElementById('taskCountDown').addEventListener('click', () => {
         if (parseInt(range.value) > 1) { range.value = parseInt(range.value) - 1; countLabel.textContent = range.value; }
+    });
+
+    // Fullscreen live preview toggle
+    document.getElementById('fullscreenToggle').addEventListener('change', async (e) => {
+        fullscreenPreviewActive = e.target.checked;
+
+        // Always refresh the tab ID before sending
+        await getActiveTab();
+
+        if (fullscreenPreviewActive && lastLivePreviews.length > 0) {
+            sendToActiveTab({
+                type: 'show_live_previews',
+                previews: lastLivePreviews,
+            });
+        } else if (fullscreenPreviewActive && lastLivePreviews.length === 0) {
+            console.warn('[AgentUX] Toggle ON but no live previews available yet');
+        } else {
+            sendToActiveTab({ type: 'hide_live_previews' });
+        }
     });
 
     // Restore saved state if an evaluation is in progress
@@ -340,6 +407,28 @@ function updateProgress(data) {
 
     // ── Live Browser Iframes ──
     if (data.persona_results && data.persona_results.length > 0) {
+        // Build list of live previews for fullscreen mode
+        const newPreviews = data.persona_results
+            .filter(p => p.live_url)
+            .map(p => ({
+                live_url: p.live_url,
+                persona_name: p.persona_name,
+                persona_type: p.persona_type,
+                status: p.status,
+            }));
+
+        // Update fullscreen previews if the list changed
+        const previewsChanged = JSON.stringify(newPreviews) !== JSON.stringify(lastLivePreviews);
+        lastLivePreviews = newPreviews;
+
+        if (fullscreenPreviewActive && previewsChanged && newPreviews.length > 0) {
+            sendToActiveTab({
+                type: 'show_live_previews',
+                previews: newPreviews,
+            });
+        }
+
+        // Sidebar iframes
         const container = document.getElementById('liveBrowsers');
         if (container) {
             data.persona_results.forEach((p, i) => {
@@ -365,7 +454,7 @@ function updateProgress(data) {
                         openBrowserLightbox(p.live_url, p.persona_name, p.persona_type);
                     });
                 }
-                // Remove iframe once persona is done
+                // Mark iframe once persona is done
                 if (p.status === 'completed' && document.getElementById(iframeId)) {
                     const existingCard = document.getElementById(iframeId)?.closest('.live-browser-card');
                     if (existingCard) {
@@ -382,6 +471,14 @@ function updateProgress(data) {
 function showResults(data) {
     document.getElementById('progressSection').style.display = 'none';
     document.getElementById('resultsSection').style.display = 'block';
+
+    // Dismiss fullscreen preview when results are ready
+    if (fullscreenPreviewActive) {
+        fullscreenPreviewActive = false;
+        document.getElementById('fullscreenToggle').checked = false;
+        sendToActiveTab({ type: 'hide_live_previews' });
+    }
+    lastLivePreviews = [];
 
     // Build issues from suggested edits
     issues = (data.suggested_edits || []).map((edit, i) => ({
@@ -721,6 +818,15 @@ function resetUI() {
     currentRunId = null;
     lastLogCount = 0;
     issues = [];
+    lastLivePreviews = [];
+
+    // Turn off fullscreen preview if active
+    if (fullscreenPreviewActive) {
+        fullscreenPreviewActive = false;
+        document.getElementById('fullscreenToggle').checked = false;
+        sendToActiveTab({ type: 'hide_live_previews' });
+    }
+
     document.getElementById('evaluateSection').style.display = 'block';
     document.getElementById('progressSection').style.display = 'none';
     document.getElementById('resultsSection').style.display = 'none';
