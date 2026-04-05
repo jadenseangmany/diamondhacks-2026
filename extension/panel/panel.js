@@ -1,17 +1,17 @@
 /**
- * AgentUX Chrome Extension — Popup Logic
+ * Agent UX Chrome Extension — Panel Logic
  */
 
 const API_BASE = 'http://localhost:8000';
 
 // ── SVG Icon Constants ───────────────────────────────────────────────────────
-const ICON_GRANDMA = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round"><circle cx="6" cy="10" r="3"/><circle cx="18" cy="10" r="3"/><path d="M3 10h18"/><path d="M9 10h6"/></svg>';
-const ICON_MILLENNIAL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"></path><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path><line x1="6" y1="1" x2="6" y2="4"></line><line x1="10" y1="1" x2="10" y2="4"></line><line x1="14" y1="1" x2="14" y2="4"></line></svg>';
+const ICON_GRANDMA = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#66B3FF" stroke-width="2.5" stroke-linecap="round"><circle cx="6" cy="10" r="3"/><circle cx="18" cy="10" r="3"/><path d="M3 10h18"/><path d="M9 10h6"/></svg>';
+const ICON_FIRST_TIME = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"></path><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path><line x1="6" y1="1" x2="6" y2="4"></line><line x1="10" y1="1" x2="10" y2="4"></line><line x1="14" y1="1" x2="14" y2="4"></line></svg>';
 const ICON_CUSTOM = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>';
 
 function personaIcon(type, size = 16) {
     if (type === 'elderly') return ICON_GRANDMA.replace(/16/g, size);
-    if (type === 'millennial') return ICON_MILLENNIAL.replace(/16/g, size);
+    if (type === 'first_time_user') return ICON_FIRST_TIME.replace(/16/g, size);
     return ICON_CUSTOM.replace(/16/g, size);
 }
 
@@ -20,6 +20,29 @@ let currentUrl = '';
 let currentRunId = null;
 let pollInterval = null;
 let issues = [];
+let activeTab = 'setup';
+
+// ── Tab Navigation ──────────────────────────────────────────────────────────
+function switchTab(tabName) {
+    activeTab = tabName;
+
+    // Update tab buttons
+    document.querySelectorAll('.tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.tab === tabName);
+    });
+
+    // Update tab content
+    document.querySelectorAll('.tab-content').forEach(s => {
+        const isTarget = s.dataset.tab === tabName;
+        s.style.display = isTarget ? 'block' : 'none';
+        s.classList.toggle('active', isTarget);
+    });
+}
+
+function enableTab(tabName) {
+    const tab = document.querySelector(`.tab[data-tab="${tabName}"]`);
+    if (tab) tab.disabled = false;
+}
 
 // ── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -29,6 +52,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         currentUrl = tab.url;
         document.getElementById('pageUrl').textContent = currentUrl;
     }
+
+    // Tab click handlers
+    document.querySelectorAll('.tab').forEach(t => {
+        t.addEventListener('click', () => {
+            if (!t.disabled) switchTab(t.dataset.tab);
+        });
+    });
 
     // Persona chip toggling
     document.getElementById('personaChips').addEventListener('click', (e) => {
@@ -57,7 +87,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         const customPayload = {
             type: "custom_" + Date.now(),
             name: nameInput.value,
-            emoji: "🧑",
             system_prompt: promptInput.value
         };
 
@@ -66,13 +95,9 @@ document.addEventListener('DOMContentLoaded', async () => {
         newChip.className = 'persona-chip active';
         newChip.dataset.customPayload = JSON.stringify(customPayload);
         newChip.dataset.persona = customPayload.type;
-        newChip.innerHTML = `
-            <span class="chip-icon" style="background: rgba(52, 211, 153, 0.15)">${personaIcon('custom', 20)}</span>
-            <span class="chip-name">${escapeHtml(nameInput.value)}</span>
-        `;
+        newChip.innerHTML = `<span class="chip-name">${escapeHtml(nameInput.value)}</span>`;
         document.getElementById('personaChips').appendChild(newChip);
 
-        // Reset form
         nameInput.value = '';
         promptInput.value = '';
         document.getElementById('customPersonaForm').style.display = 'none';
@@ -81,6 +106,9 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Evaluate button
     document.getElementById('evaluateBtn').addEventListener('click', startEvaluation);
+
+    // Header restart button
+    document.getElementById('restartHeaderBtn').addEventListener('click', resetUI);
 
     // Global Force Clear Fixes
     document.getElementById('clearAllFixesBtn').addEventListener('click', async () => {
@@ -103,8 +131,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Copy prompt button
     document.getElementById('copyPromptBtn').addEventListener('click', copyDeployPrompt);
 
-    // Restart testing button
-    document.getElementById('restartBtnProgress').addEventListener('click', resetUI);
+    // Restart testing button (results page)
     document.getElementById('restartBtnResults').addEventListener('click', resetUI);
 
     // Task count controls
@@ -118,7 +145,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         if (parseInt(range.value) > 1) { range.value = parseInt(range.value) - 1; countLabel.textContent = range.value; }
     });
 
-    // Restore saved state if an evaluation is in progress
+    // Restore saved state
     await restoreState();
 });
 
@@ -128,7 +155,7 @@ async function saveState(phase) {
         agentux_state: {
             runId: currentRunId,
             url: currentUrl,
-            phase, // 'evaluate' | 'progress' | 'results'
+            phase,
         }
     });
 }
@@ -152,9 +179,8 @@ async function restoreState() {
                 currentRunId = null;
                 return;
             }
-            document.getElementById('evaluateSection').style.display = 'none';
-            document.getElementById('progressSection').style.display = 'block';
-            document.getElementById('resultsSection').style.display = 'none';
+            enableTab('progress');
+            switchTab('progress');
             startPolling();
         } else if (state.phase === 'results') {
             const resp = await fetch(`${API_BASE}/api/runs/${currentRunId}`);
@@ -164,12 +190,13 @@ async function restoreState() {
                 return;
             }
             const data = await resp.json();
-            document.getElementById('evaluateSection').style.display = 'none';
+            enableTab('progress');
             if (data.status === 'awaiting_approval' || data.status === 'completed' || data.status === 'failed') {
-                document.getElementById('progressSection').style.display = 'none';
+                enableTab('results');
+                switchTab('results');
                 showResults(data);
             } else {
-                document.getElementById('progressSection').style.display = 'block';
+                switchTab('progress');
                 startPolling();
             }
         }
@@ -202,10 +229,9 @@ async function startEvaluation() {
     btn.disabled = true;
     btn.innerHTML = '<span>Starting...</span>';
 
-    // Show progress
-    document.getElementById('evaluateSection').style.display = 'none';
-    document.getElementById('progressSection').style.display = 'block';
-    document.getElementById('resultsSection').style.display = 'none';
+    // Switch to progress tab
+    enableTab('progress');
+    switchTab('progress');
 
     try {
         const resp = await fetch(`${API_BASE}/api/test`, {
@@ -223,12 +249,11 @@ async function startEvaluation() {
         const data = await resp.json();
         currentRunId = data.id;
 
-        // Save state and start polling
         await saveState('progress');
         startPolling();
     } catch (err) {
         console.error('Failed to start:', err);
-        alert('Failed to connect to AgentUX backend. Make sure it is running on port 8000.');
+        alert('Failed to connect to Agent UX backend. Make sure it is running on port 8000.');
         resetUI();
     }
 }
@@ -247,7 +272,6 @@ async function pollResults() {
         const resp = await fetch(`${API_BASE}/api/runs/${currentRunId}`);
         if (!resp.ok) {
             if (resp.status === 404) {
-                // Run no longer exists — server was restarted
                 clearInterval(pollInterval);
                 await clearState();
                 currentRunId = null;
@@ -263,14 +287,14 @@ async function pollResults() {
         if (data.status === 'awaiting_approval' || data.status === 'completed') {
             clearInterval(pollInterval);
             await saveState('results');
+            enableTab('results');
+            switchTab('results');
             showResults(data);
         } else if (data.status === 'failed') {
             clearInterval(pollInterval);
             await clearState();
             currentRunId = null;
             resetUI();
-            
-            // Show the error message from the backend log
             const errorMsg = data.log_messages.find(m => m.includes('[ERROR]')) || 'Unknown pipeline failure.';
             alert('Evaluation failed: ' + errorMsg);
         }
@@ -314,11 +338,11 @@ function updateProgress(data) {
             entry.className = 'log-entry';
 
             // Color-code by persona
-            if (msg.includes('👵') || msg.includes('Grandma') || msg.includes('elderly')) {
+            if (msg.includes('Grandma') || msg.includes('elderly')) {
                 entry.classList.add('log-grandma');
-            } else if (msg.includes('☕') || msg.includes('Millennial') || msg.includes('millennial')) {
-                entry.classList.add('log-genz'); // reusing genz styling color for millennial
-            } else if (msg.includes('🧑') || msg.includes('Custom')) {
+            } else if (msg.includes('First Time User') || msg.includes('first_time_user')) {
+                entry.classList.add('log-genz');
+            } else if (msg.includes('Custom')) {
                 entry.classList.add('log-custom');
             } else if (msg.includes('[WARN]')) {
                 entry.classList.add('log-warn');
@@ -328,13 +352,39 @@ function updateProgress(data) {
                 entry.classList.add('log-system');
             }
 
-            // Clean up timestamp for display
-            const cleaned = msg.replace(/\[\d{4}-\d{2}-\d{2}T[\d:.]+\]\s*/, '');
-            entry.textContent = cleaned;
+            // Tag-based styling
+            if (msg.includes('[TASK]')) entry.classList.add('log-task');
+            if (msg.includes('[slow]')) entry.classList.add('log-slow');
+            if (msg.includes('confusion') || msg.includes('backtracking')) entry.classList.add('log-confusion');
+            if (msg.includes('Zoomed in')) entry.classList.add('log-zoom');
+
+            // Extract timestamp and format as HH:MM:SS
+            let cleaned = msg;
+            const tsMatch = msg.match(/\[(\d{4}-\d{2}-\d{2}T[\d:.]+)\]\s*/);
+            let timeStr = '';
+            if (tsMatch) {
+                const d = new Date(tsMatch[1]);
+                timeStr = d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                cleaned = msg.replace(tsMatch[0], '');
+            }
+            cleaned = cleaned.replace('[TASK] ', '');
+            cleaned = cleaned.replace(' [slow]', '');
+
+            if (timeStr) {
+                const ts = document.createElement('span');
+                ts.className = 'log-timestamp';
+                ts.textContent = timeStr;
+                entry.appendChild(ts);
+
+                const text = document.createElement('span');
+                text.textContent = ' ' + cleaned;
+                entry.appendChild(text);
+            } else {
+                entry.textContent = cleaned;
+            }
             logEl.appendChild(entry);
         });
 
-        // Auto-scroll to bottom
         logEl.scrollTop = logEl.scrollHeight;
     }
 
@@ -347,10 +397,9 @@ function updateProgress(data) {
                 if (p.live_url && !document.getElementById(iframeId)) {
                     const card = document.createElement('div');
                     card.className = 'live-browser-card';
-                    const isGrandma = p.persona_type === 'elderly' || p.persona_name.toLowerCase().includes('grandma');
                     card.innerHTML = `
-                        <div class="live-browser-label" style="border-color:${isGrandma ? '#a78bfa' : '#22d3ee'}">
-                            <span class="live-persona-badge" style="background:${isGrandma ? '#a78bfa' : '#22d3ee'}">${personaIcon(p.persona_type)} ${p.persona_name}</span>
+                        <div class="live-browser-label" style="border-color:var(--primary)">
+                            <span class="live-persona-badge" style="background:var(--primary)">${personaIcon(p.persona_type)} ${p.persona_name}</span>
                             <span class="live-status-dot"></span>
                         </div>
                         <div class="live-browser-wrapper">
@@ -360,17 +409,14 @@ function updateProgress(data) {
                     `;
                     container.appendChild(card);
 
-                    // Attach click handler to the overlay (iframes swallow clicks)
                     card.querySelector('.live-browser-click-overlay').addEventListener('click', () => {
                         openBrowserLightbox(p.live_url, p.persona_name, p.persona_type);
                     });
                 }
-                // Remove iframe once persona is done
                 if (p.status === 'completed' && document.getElementById(iframeId)) {
                     const existingCard = document.getElementById(iframeId)?.closest('.live-browser-card');
                     if (existingCard) {
                         existingCard.querySelector('.live-status-dot')?.classList.add('done');
-                        existingCard.querySelector('.live-persona-badge').textContent += ' ✓';
                     }
                 }
             });
@@ -380,10 +426,6 @@ function updateProgress(data) {
 
 // ── Results ──────────────────────────────────────────────────────────────────
 function showResults(data) {
-    document.getElementById('progressSection').style.display = 'none';
-    document.getElementById('resultsSection').style.display = 'block';
-
-    // Build issues from suggested edits
     issues = (data.suggested_edits || []).map((edit, i) => ({
         id: edit.id || `issue-${i}`,
         title: edit.description,
@@ -400,7 +442,6 @@ function showResults(data) {
     document.getElementById('issueCount').textContent = issues.length;
     renderIssues();
 
-    // Show deploy section if there are issues
     if (issues.length > 0) {
         document.getElementById('deploySection').style.display = 'block';
         generateDeployPrompt();
@@ -435,7 +476,7 @@ function renderIssues() {
                     ` : issue.before || issue.after ? `
                         <div class="issue-preview">
                             <div class="preview-pane preview-before">
-                                <span class="preview-label">— Before</span>
+                                <span class="preview-label">- Before</span>
                                 ${escapeHtml(issue.before || '(no content)')}
                             </div>
                             <div class="preview-pane preview-after">
@@ -446,22 +487,22 @@ function renderIssues() {
                     ` : ''}
                     <div class="code-editor" id="codeEditor${i}" style="display:none; margin-bottom:10px;">
                         <span class="preview-label">Edit CSS Fix</span>
-                        <textarea class="edit-css" spellcheck="false" style="width:100%; height:60px; font-family:var(--font-mono); font-size:11px; margin-bottom:10px; background:var(--bg-tertiary); color:white; border:1px solid var(--border-color); border-radius:4px; padding:8px; box-sizing:border-box;">${issue.fix_css || ''}</textarea>
+                        <textarea class="edit-css" spellcheck="false" style="width:100%; height:60px; font-family:var(--font-mono); font-size:11px; margin-bottom:10px; background:var(--bg-elevated); color:var(--text-primary); border:1px solid var(--border-color); border-radius:4px; padding:8px; box-sizing:border-box;">${issue.fix_css || ''}</textarea>
                         <span class="preview-label">Edit JS Fix</span>
-                        <textarea class="edit-js" spellcheck="false" style="width:100%; height:80px; font-family:var(--font-mono); font-size:11px; background:var(--bg-tertiary); color:white; border:1px solid var(--border-color); border-radius:4px; padding:8px; box-sizing:border-box;">${issue.fix_js || ''}</textarea>
+                        <textarea class="edit-js" spellcheck="false" style="width:100%; height:80px; font-family:var(--font-mono); font-size:11px; background:var(--bg-elevated); color:var(--text-primary); border:1px solid var(--border-color); border-radius:4px; padding:8px; box-sizing:border-box;">${issue.fix_js || ''}</textarea>
                     </div>
                     <div class="issue-actions">
                         <button class="btn-skip toggle-code-btn" data-issue="${i}" style="flex:0.3; padding:8px 0;" title="Edit AI Code">
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 19l7-7 3 3-7 7-3-3z"></path><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"></path><path d="M2 2l7.586 7.586"></path><circle cx="11" cy="11" r="2"></circle></svg>
                         </button>
                         ${issue.applied ? `
-                        <button class="btn-apply applied" data-issue="${i}" style="flex:1; background:var(--bg-tertiary);">
-                            ✓ Applied
+                        <button class="btn-apply applied" data-issue="${i}" style="flex:1;">
+                            Applied
                         </button>
-                        <button class="btn-skip revert-fix-btn" data-issue="${i}" style="flex:0.5; border-color:#ef4444; color:#ef4444;" title="Revert Changes">↺ Revert</button>
+                        <button class="btn-skip revert-fix-btn" data-issue="${i}" style="flex:0.5; border-color:var(--accent-red); color:var(--accent-red);" title="Revert Changes">Revert</button>
                         ` : `
                         <button class="btn-apply apply-fix-btn" data-issue="${i}" style="flex:1">
-                            ✦ Apply Fix
+                            Apply Fix
                         </button>
                         <button class="btn-skip toggle-issue-btn" data-issue="${i}" style="flex:0.5">Skip</button>
                         `}
@@ -471,34 +512,21 @@ function renderIssues() {
         `;
     }).join('');
 
-    // Attach event listeners dynamically to avoid CSP errors (no inline onclick allowed)
+    // Attach event listeners
     document.querySelectorAll('.toggle-issue-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const index = e.currentTarget.dataset.issue;
-            toggleIssue(index);
-        });
+        btn.addEventListener('click', (e) => toggleIssue(e.currentTarget.dataset.issue));
     });
-
     document.querySelectorAll('.toggle-code-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
-            const index = e.currentTarget.dataset.issue;
-            const editor = document.getElementById(`codeEditor${index}`);
+            const editor = document.getElementById(`codeEditor${e.currentTarget.dataset.issue}`);
             if (editor) editor.style.display = editor.style.display === 'none' ? 'block' : 'none';
         });
     });
-
     document.querySelectorAll('.apply-fix-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const index = e.currentTarget.dataset.issue;
-            applyFix(index);
-        });
+        btn.addEventListener('click', (e) => applyFix(e.currentTarget.dataset.issue));
     });
-
     document.querySelectorAll('.revert-fix-btn').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            const index = e.currentTarget.dataset.issue;
-            revertFix(index);
-        });
+        btn.addEventListener('click', (e) => revertFix(e.currentTarget.dataset.issue));
     });
 }
 
@@ -533,15 +561,12 @@ async function revertFix(index) {
 
         if (issue.fix_css) {
             try {
-                await chrome.scripting.removeCSS({
-                    target: { tabId: tab.id },
-                    css: issue.fix_css,
-                });
+                await chrome.scripting.removeCSS({ target: { tabId: tab.id }, css: issue.fix_css });
             } catch (e) {
                 console.warn('Could not remove CSS:', e);
             }
         }
-        
+
         if (issue.fix_js) {
             await chrome.tabs.reload(tab.id);
         }
@@ -564,9 +589,8 @@ async function applyFix(index) {
     if (cssArea && cssArea.value.trim() !== '') issue.fix_css = cssArea.value;
     if (jsArea && jsArea.value.trim() !== '') issue.fix_js = jsArea.value;
 
-    // Check that there's something to inject
     if (!issue.fix_js && !issue.fix_css) {
-        alert('No fix script available for this issue. The AI did not generate injectable code.');
+        alert('No fix script available for this issue.');
         return;
     }
 
@@ -577,46 +601,25 @@ async function applyFix(index) {
         const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
         if (!tab) throw new Error('No active tab');
 
-        // 1. Capture BEFORE screenshot
         const beforeImg = await chrome.tabs.captureVisibleTab(null, { format: 'png' });
 
-        // Show toast animation on the target page
+        // Show toast
         await chrome.scripting.executeScript({
             target: { tabId: tab.id },
             func: () => {
                 const toast = document.createElement('div');
                 toast.id = 'agentux-toast';
-                toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#a78bfa;color:white;padding:12px 24px;border-radius:8px;font-family:system-ui,sans-serif;font-weight:600;font-size:14px;z-index:999999;box-shadow:0 10px 25px rgba(0,0,0,0.3);transition:all 0.4s ease;transform:translateY(20px);opacity:0;';
-                toast.textContent = 'AgentUX: Generating Edit...';
+                toast.style.cssText = 'position:fixed;bottom:20px;right:20px;background:#0084FF;color:white;padding:12px 24px;border-radius:8px;font-family:system-ui,sans-serif;font-weight:600;font-size:14px;z-index:999999;box-shadow:0 10px 25px rgba(0,0,0,0.3);transition:all 0.4s ease;transform:translateY(20px);opacity:0;';
+                toast.textContent = 'Agent UX: Applying fix...';
                 document.body.appendChild(toast);
-                
-                // Animate in
-                requestAnimationFrame(() => {
-                    toast.style.transform = 'translateY(0)';
-                    toast.style.opacity = '1';
-                });
-
-                // Show success status after brief delay (simulating applying)
-                setTimeout(() => {
-                    toast.style.background = '#34d399';
-                    toast.textContent = 'AgentUX: Fix Successfully Applied ✓';
-                }, 400);
-
-                // Fade out and remove
-                setTimeout(() => {
-                    toast.style.opacity = '0';
-                    toast.style.transform = 'translateY(20px)';
-                    setTimeout(() => toast.remove(), 400);
-                }, 3000);
+                requestAnimationFrame(() => { toast.style.transform = 'translateY(0)'; toast.style.opacity = '1'; });
+                setTimeout(() => { toast.style.background = '#34d399'; toast.textContent = 'Agent UX: Fix applied'; }, 400);
+                setTimeout(() => { toast.style.opacity = '0'; toast.style.transform = 'translateY(20px)'; setTimeout(() => toast.remove(), 400); }, 3000);
             }
         });
 
-        // 2. Apply the fix via chrome.scripting (works regardless of content script)
         if (issue.fix_css) {
-            await chrome.scripting.insertCSS({
-                target: { tabId: tab.id },
-                css: issue.fix_css,
-            });
+            await chrome.scripting.insertCSS({ target: { tabId: tab.id }, css: issue.fix_css });
         }
 
         if (issue.fix_js) {
@@ -626,56 +629,34 @@ async function applyFix(index) {
                 func: (jsCode) => {
                     try {
                         const script = document.createElement('script');
-                        script.textContent = `
-try {
-  // Wrap AI-generated code
-  ${jsCode}
-} catch(err) {
-  // Throw visible alert so the user doesn't wonder why it silently failed
-  alert('AgentUX DOM Injection Error: ' + err.message + '\\n\\nThe requested element may not exist on the page. Try manually adjusting the JS payload via the Edit Code button!');
-}`;
+                        script.textContent = `try { ${jsCode} } catch(err) { alert('Agent UX DOM Error: ' + err.message); }`;
                         (document.head || document.documentElement).appendChild(script);
                         script.remove();
-                    } catch(e) {
-                        console.error('[AgentUX JS Injection]', e);
-                    }
+                    } catch(e) { console.error('[Agent UX JS Injection]', e); }
                 },
                 args: [issue.fix_js],
             });
         }
 
-        // 3. Small delay to let changes render
         await new Promise(r => setTimeout(r, 500));
-
-        // 4. Capture AFTER screenshot
         const afterImg = await chrome.tabs.captureVisibleTab(null, { format: 'png' });
 
-        // 5. Save fix for persistence (via content script)
         try {
             await chrome.tabs.sendMessage(tab.id, {
                 type: 'save_fix',
-                fix: {
-                    id: issue.id,
-                    url: currentUrl,
-                    domain: new URL(currentUrl).hostname,
-                    css: issue.fix_css,
-                    js: issue.fix_js,
-                    description: issue.title,
-                },
+                fix: { id: issue.id, url: currentUrl, domain: new URL(currentUrl).hostname, css: issue.fix_css, js: issue.fix_js, description: issue.title },
             });
         } catch (e) {
-            console.log('Content script not available for persistence, fix applied but won\'t persist');
+            console.log('Content script not available for persistence');
         }
 
-        // 6. Update state with screenshots
         issue.applied = true;
         issue.beforeScreenshot = beforeImg;
         issue.afterScreenshot = afterImg;
         renderIssues();
-
     } catch (e) {
         console.error('Apply fix failed:', e);
-        if (btn) { btn.textContent = '✦ Apply Fix'; btn.disabled = false; }
+        if (btn) { btn.textContent = 'Apply Fix'; btn.disabled = false; }
         alert(`Fix failed: ${e.message}`);
     }
 }
@@ -691,7 +672,6 @@ function generateDeployPrompt() {
             if (issue.after) entry += `   After: ${issue.after}\n`;
             return entry;
         }).join('\n');
-
     document.getElementById('deployPrompt').textContent = prompt;
 }
 
@@ -701,16 +681,10 @@ async function copyDeployPrompt() {
 
     const btn = document.getElementById('copyPromptBtn');
     btn.classList.add('copied');
-    btn.innerHTML = `
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-        Copied!
-    `;
+    btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg> Copied!`;
     setTimeout(() => {
         btn.classList.remove('copied');
-        btn.innerHTML = `
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-            Copy Prompt
-        `;
+        btn.innerHTML = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copy Prompt`;
     }, 2000);
 }
 
@@ -721,16 +695,19 @@ function resetUI() {
     currentRunId = null;
     lastLogCount = 0;
     issues = [];
-    document.getElementById('evaluateSection').style.display = 'block';
-    document.getElementById('progressSection').style.display = 'none';
-    document.getElementById('resultsSection').style.display = 'none';
+
+    // Reset tab states
+    document.getElementById('tabProgress').disabled = true;
+    document.getElementById('tabResults').disabled = true;
+    switchTab('setup');
+
     const liveBrowsers = document.getElementById('liveBrowsers');
     if (liveBrowsers) liveBrowsers.innerHTML = '';
     document.getElementById('liveLogEntries').innerHTML = '';
     const btn = document.getElementById('evaluateBtn');
     btn.disabled = false;
     btn.innerHTML = `
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
         <span>Evaluate This Page</span>
     `;
     clearState();
@@ -747,8 +724,7 @@ function escapeHtml(str) {
 document.body.addEventListener('click', (e) => {
     if (e.target.classList.contains('screenshot-img')) {
         const lightbox = document.getElementById('imageLightbox');
-        const lightboxImg = document.getElementById('lightboxImg');
-        lightboxImg.src = e.target.src;
+        document.getElementById('lightboxImg').src = e.target.src;
         lightbox.style.display = 'flex';
     }
 });
@@ -760,41 +736,24 @@ document.getElementById('imageLightbox').addEventListener('click', () => {
 // ── Browser Lightbox Logic ───────────────────────────────────────────────────
 function openBrowserLightbox(liveUrl, personaName, personaType) {
     const lightbox = document.getElementById('browserLightbox');
-    const iframe = document.getElementById('lightboxBrowserIframe');
-    const label = document.getElementById('lightboxBrowserLabel');
-
-    iframe.src = liveUrl;
-    label.innerHTML = `${personaIcon(personaType, 20)} <span>${personaName}</span>`;
+    document.getElementById('lightboxBrowserIframe').src = liveUrl;
+    document.getElementById('lightboxBrowserLabel').innerHTML = `${personaIcon(personaType, 20)} <span>${personaName}</span>`;
     lightbox.style.display = 'flex';
 }
 
 function closeBrowserLightbox() {
-    const lightbox = document.getElementById('browserLightbox');
-    const iframe = document.getElementById('lightboxBrowserIframe');
-    lightbox.style.display = 'none';
-    // Don't clear src immediately - allow a moment for animation
-    setTimeout(() => {
-        iframe.src = 'about:blank';
-    }, 300);
+    document.getElementById('browserLightbox').style.display = 'none';
+    setTimeout(() => { document.getElementById('lightboxBrowserIframe').src = 'about:blank'; }, 300);
 }
 
 document.getElementById('closeBrowserLightbox').addEventListener('click', closeBrowserLightbox);
 document.getElementById('browserLightbox').addEventListener('click', (e) => {
-    // Only close if clicking the background, not the iframe or label
-    if (e.target.id === 'browserLightbox') {
-        closeBrowserLightbox();
-    }
+    if (e.target.id === 'browserLightbox') closeBrowserLightbox();
 });
 
-// Keyboard shortcut: ESC to close lightboxes
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
-        const browserLightbox = document.getElementById('browserLightbox');
-        const imageLightbox = document.getElementById('imageLightbox');
-        if (browserLightbox.style.display === 'flex') {
-            closeBrowserLightbox();
-        } else if (imageLightbox.style.display === 'flex') {
-            imageLightbox.style.display = 'none';
-        }
+        if (document.getElementById('browserLightbox').style.display === 'flex') closeBrowserLightbox();
+        else if (document.getElementById('imageLightbox').style.display === 'flex') document.getElementById('imageLightbox').style.display = 'none';
     }
 });

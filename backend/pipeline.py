@@ -244,11 +244,13 @@ async def step_execute_personas(run: TestRun, on_progress: ProgressCallback = No
         # If it's a built-in key string (e.g. 'elderly'), expand it
         if isinstance(p_info, dict):
             p_dict = p_info
+            p_type = p_dict.get("type", "custom")
         else:
             p_dict = PERSONAS.get(p_info, PERSONAS["elderly"])
+            p_type = p_info
 
         result = PersonaResult(
-            persona_type=p_dict.get("type", "custom"),
+            persona_type=p_type,
             persona_name=p_dict.get("name", "Custom User"),
             tasks_total=len(run.tasks),
             status=TaskStatus.PENDING,
@@ -280,6 +282,78 @@ async def step_execute_personas(run: TestRun, on_progress: ProgressCallback = No
     return run
 
 
+def _parse_step_summary(raw: str, persona_name: str, elapsed_sec: float) -> str | None:
+    """
+    Transform a raw Browser Use lastStepSummary into a human-readable feed entry.
+    Returns None if the step should be filtered out (noise).
+    """
+    lower = raw.lower().strip()
+
+    # ── Filter out noise ──
+    noise_patterns = [
+        "getting browser state",
+        "python: import",
+        "python: re.",
+        "python: print",
+        "waiting for",
+        "get_browser_state",
+        "extract_content",
+    ]
+    for noise in noise_patterns:
+        if noise in lower:
+            return None
+
+    # ── Parse into readable actions ──
+    slow_tag = " [slow]" if elapsed_sec >= 15 else ""
+
+    # Clicking
+    click_match = re.match(r"click(?:ing|ed)?\s+(?:on\s+)?(?:element\s+)?(.+)", lower, re.IGNORECASE)
+    if click_match:
+        target = click_match.group(1).strip().strip("#'\"")
+        return f"{persona_name}: Clicked on {target}{slow_tag}"
+
+    # Typing / Input
+    type_match = re.match(r"(?:typ(?:ing|ed)|input(?:ting)?|fill(?:ing|ed)?)\s+(.+)", lower, re.IGNORECASE)
+    if type_match:
+        target = type_match.group(1).strip()
+        return f"{persona_name}: Typed into {target}"
+
+    # Scrolling
+    if "scroll" in lower:
+        direction = "down" if "down" in lower else "up" if "up" in lower else ""
+        return f"{persona_name}: Scrolled {direction}{slow_tag}".strip()
+
+    # Zooming
+    if "zoom" in lower or "ctrl+plus" in lower or "ctrl+=" in lower or "ctrl++" in lower:
+        return f"{persona_name}: Zoomed in to read content"
+
+    # Navigation
+    if "navigat" in lower or "go to" in lower or "goto" in lower or "open" in lower:
+        return f"{persona_name}: Navigating to page"
+
+    # Page loaded
+    if "page" in lower and ("load" in lower or "ready" in lower):
+        return f"{persona_name}: Page loaded"
+
+    # Searching / looking
+    if "search" in lower or "looking for" in lower or "find" in lower:
+        return f"{persona_name}: Searching the page{slow_tag}"
+
+    # Confusion / hesitation signals
+    if any(w in lower for w in ["confus", "hesitat", "stuck", "lost", "unclear", "frustrat", "where"]):
+        return f"{persona_name}: Expressing confusion{slow_tag}"
+
+    # Backtracking
+    if "back" in lower and ("go" in lower or "click" in lower or "press" in lower or "navig" in lower):
+        return f"{persona_name}: Going back (backtracking){slow_tag}"
+
+    # Generic: if the summary is short enough and not noise, pass it through cleaned up
+    cleaned = raw.strip()
+    if len(cleaned) > 120:
+        cleaned = cleaned[:117] + "..."
+    return f"{persona_name}: {cleaned}{time_tag}{slow_tag}"
+
+
 async def _run_single_persona(
     run: TestRun,
     index: int,
@@ -295,9 +369,8 @@ async def _run_single_persona(
 
     persona_prompt = persona_dict.get("system_prompt", "You are a user testing this website.")
     persona_name = persona_dict.get("name", "Custom User")
-    persona_emoji = persona_dict.get("emoji", "🧑")
 
-    run.log_messages.append(f"[{datetime.now().isoformat()}] {persona_emoji} Starting persona: {persona_name}")
+    run.log_messages.append(f"[{datetime.now().isoformat()}] Starting persona: {persona_name}")
     if on_progress:
         on_progress(run)
 
@@ -308,7 +381,7 @@ async def _run_single_persona(
     for task in run.tasks:
         try:
             run.log_messages.append(
-                f"[{datetime.now().isoformat()}] {persona_emoji} {persona_name} → Task: {task.title}"
+                f"[{datetime.now().isoformat()}] [TASK] {persona_name} starting: {task.title}"
             )
             if on_progress:
                 on_progress(run)
@@ -367,7 +440,7 @@ async def _run_single_persona(
                         result.cloud_session_id = session_id
 
                         run.log_messages.append(
-                            f"[{datetime.now().isoformat()}] {persona_emoji} {persona_name} cloud session: {session_id[:8]}... | Live URL: {live_url[:80] if live_url else 'NONE'}"
+                            f"[{datetime.now().isoformat()}] {persona_name} session started"
                         )
                         print(f"[DEBUG] Cloud API response for {persona_name}: liveUrl={live_url}, sessionId={session_id}")
                         if on_progress:
@@ -376,6 +449,8 @@ async def _run_single_persona(
                         # 2. Poll until session completes
                         poll_url = f"{cloud_api_url}/{session_id}"
                         max_polls = 120  # 10 minutes max (5s intervals)
+                        last_step_time = datetime.now()
+                        last_step_summary = ""
                         for _ in range(max_polls):
                             await asyncio.sleep(5)
                             async with session.get(poll_url, headers=headers) as poll_resp:
@@ -386,12 +461,19 @@ async def _run_single_persona(
                             status = poll_data.get("status", "")
                             step_summary = poll_data.get("lastStepSummary", "")
 
-                            if step_summary:
-                                run.log_messages.append(
-                                    f"[{datetime.now().isoformat()}] {persona_emoji} {persona_name}: {step_summary}"
-                                )
-                                if on_progress:
-                                    on_progress(run)
+                            if step_summary and step_summary != last_step_summary:
+                                now = datetime.now()
+                                elapsed = (now - last_step_time).total_seconds()
+                                last_step_time = now
+                                last_step_summary = step_summary
+
+                                parsed = _parse_step_summary(step_summary, persona_name, elapsed)
+                                if parsed:
+                                    run.log_messages.append(
+                                        f"[{now.isoformat()}] {parsed}"
+                                    )
+                                    if on_progress:
+                                        on_progress(run)
 
                             if status in ("stopped", "error", "timed_out"):
                                 task_output = str(poll_data.get("output", "")) or step_summary or "No output"
@@ -402,7 +484,7 @@ async def _run_single_persona(
                                 break
                         else:
                             task_output = "Cloud session timed out after polling limit"
-                            run.log_messages.append(f"[WARN] {persona_name} cloud session polling timed out")
+                            run.log_messages.append(f"[WARN] {persona_name} session timed out")
 
                 except Exception as e:
                     run.log_messages.append(f"[WARN] Cloud API failed for {persona_name}/{task.title}: {e}")
@@ -431,7 +513,7 @@ async def _run_single_persona(
                 )
 
             run.log_messages.append(
-                f"[{datetime.now().isoformat()}] {persona_emoji} {persona_name} completed: {task.title}"
+                f"[{datetime.now().isoformat()}] {persona_name} completed: {task.title}"
             )
 
             # Extract confusion signals from the output
@@ -634,9 +716,17 @@ async def step_validate_edits(run: TestRun, on_progress: ProgressCallback = None
         on_progress(run)
 
     valid_edits = []
-    
-    from playwright.async_api import async_playwright
-    
+
+    try:
+        from playwright.async_api import async_playwright
+    except ImportError:
+        run.log_messages.append(f"[{datetime.now().isoformat()}] [Validation] Playwright not installed, skipping visual validation")
+        run.status = RunStatus.AWAITING_APPROVAL
+        run.progress = 90.0
+        if on_progress:
+            on_progress(run)
+        return run
+
     try:
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
