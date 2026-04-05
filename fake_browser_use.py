@@ -1063,20 +1063,50 @@ def run_task(task: str, url: str, persona_label: str = "Browser Use") -> TaskTra
 
 def run_tasks_multi_persona(tasks: list[str], url: str) -> dict[str, list[dict]]:
     """
-    Run all tasks × 3 personas in parallel using CDP tabs in the existing Chrome.
+    Run all tasks × personas in parallel using CDP tabs in the existing Chrome.
     Fallback: deterministic mock with OS threads.
+
+    Uses a daemon thread so the pipeline is never blocked if asyncio.run() hangs
+    during cleanup (browser-use sometimes leaves CDP reconnect tasks lingering).
+    Results are captured BEFORE asyncio.run() enters its cleanup phase.
     """
     if _BROWSER_USE_AVAILABLE:
-        # Check Chrome is reachable before trying
         cdp_ok = asyncio.run(_check_cdp())
         if not cdp_ok:
             print(_CDP_UNAVAILABLE_MSG, flush=True)
         else:
-            try:
-                return asyncio.run(_run_tasks_multi_persona_async(tasks, url))
-            except Exception as exc:
+            results_ready = threading.Event()
+            result_holder: dict = {}
+
+            async def _run_and_store():
+                try:
+                    result_holder["data"] = await _run_tasks_multi_persona_async(tasks, url)
+                except Exception as exc:
+                    result_holder["error"] = exc
+                finally:
+                    results_ready.set()   # set BEFORE asyncio.run() cleanup phase
+
+            def _worker():
+                try:
+                    asyncio.run(_run_and_store())
+                except Exception:
+                    pass
+                finally:
+                    results_ready.set()   # also set on unexpected exit
+
+            t = threading.Thread(target=_worker, daemon=True, name="browser-use-runner")
+            t.start()
+
+            # Wait up to 6 minutes for the coroutine to finish
+            # (agents typically complete in ~2 min; asyncio cleanup may hang, but
+            #  results are captured above before cleanup starts)
+            results_ready.wait(timeout=360)
+
+            if "data" in result_holder:
+                return result_holder["data"]
+            if "error" in result_holder:
                 with _print_lock:
-                    print(f"[browser_use] async run failed: {exc} — falling back to mock", flush=True)
+                    print(f"[browser_use] async run failed: {result_holder['error']} — falling back to mock", flush=True)
 
     # Mock fallback
     personas = list(PERSONA_PROFILES.keys())
