@@ -19,13 +19,11 @@ Install:
 """
 
 import asyncio
-import base64
 import os
 import random
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any, Optional
 
 # ---------------------------------------------------------------------------
@@ -62,7 +60,7 @@ def _require_llm():
     return ChatLiteLLM(
         model="gemini/gemini-3-flash-preview",
         api_key=os.environ.get("GOOGLE_API_KEY"),
-        temperature=0,
+        temperature=1,   # Gemini 3 requires temp=1; lower values cause loops/failures
         max_tokens=8096,
     )
 
@@ -73,7 +71,8 @@ def _require_llm():
 
 _print_lock = threading.Lock()
 _log_callback = None        # fn(persona_label, task_num, msg)
-_screenshot_callback = None # fn(persona_label, task_num, b64_png, path)
+_live_url_callback = None      # fn(persona_label, persona_key, task_num, live_url, session_id)
+_persona_done_callback = None  # fn(persona_key, persona_label, passed, total)
 
 
 def set_log_callback(fn) -> None:
@@ -81,9 +80,18 @@ def set_log_callback(fn) -> None:
     _log_callback = fn
 
 
-def set_screenshot_callback(fn) -> None:
-    global _screenshot_callback
-    _screenshot_callback = fn
+
+def set_live_url_callback(fn) -> None:
+    global _live_url_callback
+    _live_url_callback = fn
+
+
+def _emit_live_url(label: str, persona: str, task_num: int, live_url: str, session_id: str) -> None:
+    if _live_url_callback is not None:
+        try:
+            _live_url_callback(label, persona, task_num, live_url, session_id)
+        except Exception:
+            pass
 
 
 def _live_log(label: str, task_num: int, msg: str) -> None:
@@ -97,15 +105,12 @@ def _live_log(label: str, task_num: int, msg: str) -> None:
 
 
 async def _bring_to_front(page) -> None:
-    """Bring a CDP tab to the front.
-
-    browser-use 0.12+ returns a browser_use.actor.page.Page (CDP-based), not a
-    Playwright Page, so Playwright's bring_to_front() doesn't exist.  Use the
-    CDP Target.activateTarget command instead.  Purely cosmetic — silently
-    ignored on any error.
-    """
+    """Bring a CDP tab to the front (purely cosmetic — silently ignored on any error)."""
     try:
-        await page._client.send.Target.activateTarget({"targetId": page._target_id})
+        await asyncio.wait_for(
+            page._client.send.Target.activateTarget({"targetId": page._target_id}),
+            timeout=2,
+        )
     except Exception:
         pass
 
@@ -331,36 +336,6 @@ _READING_JS = """() => {
 }"""
 
 
-# ---------------------------------------------------------------------------
-# Screenshot helper
-# ---------------------------------------------------------------------------
-
-_SCREENSHOT_DIR = Path("screenshots")
-
-
-async def _take_screenshot(
-    browser: Any, persona: str, task_num: int, step: int
-) -> str | None:
-    """Save PNG, fire screenshot callback with base64 data. Returns relative path."""
-    try:
-        _SCREENSHOT_DIR.mkdir(exist_ok=True)
-        fname = f"{persona}_task{task_num:02d}_step{step:02d}.png"
-        fpath = _SCREENSHOT_DIR / fname
-        data = await browser.take_screenshot(full_page=False, format="png")
-        if data:
-            fpath.write_bytes(data)
-            if _screenshot_callback is not None:
-                try:
-                    b64 = base64.b64encode(data).decode()
-                    label = PERSONA_PROFILES[persona]["label"]
-                    _screenshot_callback(label, task_num, b64, str(fpath))
-                except Exception:
-                    pass
-            return str(fpath)
-    except Exception:
-        pass
-    return None
-
 
 # ---------------------------------------------------------------------------
 # Per-persona behavior loops (run concurrently with the Agent)
@@ -381,7 +356,7 @@ async def _elderly_effect_loop(page: Any, stop: asyncio.Event) -> None:
             break
         try:
             await page.evaluate(banner)
-            await page.evaluate("() => { document.body.style.zoom='150%'; }")
+            await page.evaluate("() => { document.body.style.zoom='175%'; }")
             await page.evaluate(_SLOW_MOUSE_JS)
             # Simulate slow deliberate mouse movement to a random element
             if tick % 2 == 0:
@@ -445,6 +420,101 @@ _CDP_UNAVAILABLE_MSG = """
 """
 
 
+_CLOUD_API_URL = "https://api.browser-use.com/api/v3/sessions"
+
+# Holds the "main" clean tab (no persona effects) for demo visibility + CSS injection.
+_main_page_ref: dict = {"page": None, "browser": None}
+_main_tab_callback = None   # fn(url) — called once the main tab is open
+
+
+def set_main_tab_callback(fn) -> None:
+    global _main_tab_callback
+    _main_tab_callback = fn
+
+
+async def _ensure_main_tab(url: str) -> None:
+    """Open a clean main tab at *url* with no persona effects."""
+    if not _BROWSER_USE_AVAILABLE:
+        return
+    try:
+        async def _open():
+            bp = BrowserProfile(
+                cdp_url=CDP_URL,
+                keep_alive=True,
+                minimum_wait_page_load_time=0.5,
+            )
+            browser = Browser(browser_profile=bp)
+            await browser.start()
+            await browser.navigate_to(url, new_tab=True)
+            page = await browser.get_current_page()
+            _main_page_ref["page"] = page
+            _main_page_ref["browser"] = browser
+        await asyncio.wait_for(_open(), timeout=15)
+        _live_log("Pipeline", 0, "🏠 main tab ready")
+        if _main_tab_callback is not None:
+            try:
+                _main_tab_callback(url)
+            except Exception:
+                pass
+    except Exception as exc:
+        with _print_lock:
+            print(f"[main_tab] open failed: {exc}", flush=True)
+
+
+async def _bring_main_tab_to_front() -> None:
+    page = _main_page_ref.get("page")
+    if page is None:
+        return
+    try:
+        await asyncio.wait_for(_bring_to_front(page), timeout=3)
+    except Exception:
+        pass
+
+
+async def _create_cloud_session(task: str, url: str) -> tuple[str, str] | None:
+    """
+    Create a browser-use cloud session for live viewing.
+    Returns (session_id, live_url) or None if API key is missing / call fails.
+    Requires BROWSER_USE_API_KEY env var.
+    """
+    api_key = os.environ.get("BROWSER_USE_API_KEY")
+    if not api_key:
+        return None
+    try:
+        import aiohttp
+        # Include the URL in the task — the cloud API has no separate starting_url field.
+        full_task = f"Go to {url} and complete this task: {task}"
+        payload = {
+            "task": full_task,
+            "keepAlive": True,   # keep session alive so liveUrl stays valid
+        }
+        async with aiohttp.ClientSession() as http:
+            async with http.post(
+                _CLOUD_API_URL,
+                headers={"X-Browser-Use-API-Key": api_key, "Content-Type": "application/json"},
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                text = await resp.text()
+                with _print_lock:
+                    print(f"[cloud] status={resp.status} body={text[:300]}", flush=True)
+                if resp.status in (200, 201):
+                    import json as _json
+                    data = _json.loads(text)
+                    session_id = data.get("id") or ""
+                    live_url   = data.get("liveUrl") or ""
+                    if session_id and live_url:
+                        return session_id, live_url
+                    elif session_id:
+                        # liveUrl sometimes arrives after a short delay — not available yet
+                        with _print_lock:
+                            print(f"[cloud] session {session_id} created but liveUrl is empty", flush=True)
+    except Exception as exc:
+        with _print_lock:
+            print(f"[cloud] session create error: {exc}", flush=True)
+    return None
+
+
 async def _check_cdp() -> bool:
     """Return True if Chrome is reachable at CDP_URL."""
     try:
@@ -471,7 +541,6 @@ async def _run_task_browser_use(
     profile = PERSONA_PROFILES[persona]
     label   = profile["label"]
     start_t = time.time()
-    screenshots: list[str] = []
     step_num = [0]
 
     # ── Connect to existing Chrome via CDP (no new window) ────────────────
@@ -493,6 +562,13 @@ async def _run_task_browser_use(
 
     _live_log(label, task_num, f"opening tab → {task[:60]}")
 
+    # Try to create a cloud session for the live iframe (optional, non-blocking)
+    cloud_result = await _create_cloud_session(task, url)
+    if cloud_result:
+        session_id, live_url = cloud_result
+        _live_log(label, task_num, f"🔴 live session: {live_url[:60]}")
+        _emit_live_url(label, persona, task_num, live_url, session_id)
+
     banner = _BANNER_JS.replace("{label}", profile["indicator_label"]) \
                        .replace("{color}", profile["indicator_color"])
 
@@ -507,7 +583,7 @@ async def _run_task_browser_use(
         "first_time_user": _firsttime_effect_loop,
     }[persona]
 
-    # ── Step callback: slow down + keep tab visible + screenshot ─────────
+    # ── Step callback: log action + re-inject persona effects ────────────
     async def on_step(state, output, step_idx: int) -> None:
         step_num[0] = step_idx
         action_str = ""
@@ -524,17 +600,15 @@ async def _run_task_browser_use(
 
         await asyncio.sleep(1)
 
-        # Re-inject banner on own page (navigations clear injected DOM)
+        # Re-inject banner and persona effects (navigations reset injected DOM)
         if own_page is not None:
             try:
                 await _bring_to_front(own_page)
                 await own_page.evaluate(banner)
+                if persona == "elderly_user":
+                    await own_page.evaluate("() => { document.body.style.zoom='175%'; }")
             except Exception:
                 pass
-
-        path = await _take_screenshot(browser, persona, task_num, step_idx)
-        if path:
-            screenshots.append(path)
 
     # ── Run the agent ─────────────────────────────────────────────────────
     try:
@@ -550,6 +624,9 @@ async def _run_task_browser_use(
             f"() => {{ document.title = '{profile['indicator_label']} \u2014 ' + "
             f"document.title.replace(/^.*? \u2014 /, ''); }}"
         )
+        # Apply persona-specific visual effects immediately on tab open
+        if persona == "elderly_user":
+            await own_page.evaluate("() => { document.body.style.zoom='175%'; }")
         _live_log(label, task_num, "tab ready and visible")
 
         # Start effect loop with the owned page — avoids touching other personas' tabs
@@ -561,12 +638,7 @@ async def _run_task_browser_use(
             browser=browser,
             register_new_step_callback=on_step,
         )
-        history = await agent.run(max_steps=2)
-
-        # Final screenshot
-        path = await _take_screenshot(browser, persona, task_num, step_num[0] + 1)
-        if path:
-            screenshots.append(path)
+        history = await agent.run(max_steps=5)
 
         try:
             success = history.is_done() or bool(history.final_result())
@@ -582,27 +654,26 @@ async def _run_task_browser_use(
         _live_log(label, task_num, f"✗ ERROR — {failure_reason}")
 
     # ── Tear down: stop effects, disconnect (Chrome stays open) ───────────
+    # All CDP awaits here get a hard timeout so a broken WebSocket can't hang
+    # the pipeline indefinitely.
     stop_evt.set()
     if effect_task is not None:
         effect_task.cancel()
         try:
-            await asyncio.gather(effect_task, return_exceptions=True)
+            await asyncio.wait_for(
+                asyncio.gather(effect_task, return_exceptions=True), timeout=4
+            )
         except Exception:
             pass
+    # Tab stays open so the demo audience can see the final state.
     try:
-        # Close just this tab, leave Chrome open
-        page = await browser.get_current_page()
-        await browser.close_page(page)
-    except Exception:
-        pass
-    try:
-        await browser.stop()
+        await asyncio.wait_for(browser.stop(), timeout=5)
     except Exception:
         pass
 
     elapsed = round(time.time() - start_t, 1)
     if success:
-        _live_log(label, task_num, f"✓ DONE ({elapsed}s, {len(screenshots)} screenshots)")
+        _live_log(label, task_num, f"✓ DONE ({elapsed}s)")
     else:
         _live_log(label, task_num, f"✗ FAILED ({elapsed}s) — {failure_reason}")
 
@@ -617,7 +688,7 @@ async def _run_task_browser_use(
         "failure_reason":     failure_reason,
         "confusion_points":   [],
         "actions":            actions,
-        "screenshots":        screenshots,
+        "screenshots":        [],
     }
 
 
@@ -705,7 +776,12 @@ async def _run_tasks_multi_persona_async(
     tasks sequentially within each tab, and cycle tab focus every 10 s.
     """
     _persona_pages.clear()
+    _main_page_ref["page"] = None
+    _main_page_ref["browser"] = None
     personas = list(PERSONA_PROFILES.keys())
+
+    # Open a clean "main" tab first so audience can see the real site
+    await _ensure_main_tab(url)
 
     async def run_one(persona: str) -> tuple[str, list[dict]]:
         delay = _PERSONA_START_DELAYS.get(persona, 0.0)
@@ -729,9 +805,14 @@ async def _run_tasks_multi_persona_async(
     cycler_stop.set()
     cycler_task.cancel()
     try:
-        await asyncio.gather(cycler_task, return_exceptions=True)
+        await asyncio.wait_for(
+            asyncio.gather(cycler_task, return_exceptions=True), timeout=4
+        )
     except Exception:
         pass
+
+    # Bring the clean main tab to front when all personas are done
+    await _bring_main_tab_to_front()
 
     results: dict[str, list[dict]] = {}
     for item in results_list:

@@ -226,8 +226,9 @@
     .fixes-footer {
       display: none; flex-shrink: 0; align-items: center; justify-content: space-between;
       padding: 8px 12px; border-top: 1px solid var(--border); background: var(--bg2);
+      gap: 6px;
     }
-    .fixes-counter { font-size: 0.72rem; color: var(--muted); }
+    .fixes-counter { font-size: 0.72rem; color: var(--muted); flex: 1; }
     .apply-all-btn {
       background: var(--accent); color: #fff; border: none;
       border-radius: var(--r); padding: 6px 14px; font-size: 0.75rem;
@@ -235,6 +236,49 @@
     }
     .apply-all-btn:hover { background: #6a5fff; }
     .apply-all-btn:disabled { background: #333; color: #666; cursor: default; }
+    .revert-btn {
+      display: none; background: none; color: #ff8800; border: 1px solid #ff8800;
+      border-radius: var(--r); padding: 6px 14px; font-size: 0.75rem;
+      font-weight: 700; cursor: pointer; transition: all .15s;
+    }
+    .revert-btn:hover { background: rgba(255,136,0,.15); }
+
+    /* ── Live iframe section ── */
+    .live-iframe-wrap {
+      display: flex; flex-direction: column; flex-shrink: 0;
+      border-bottom: 1px solid var(--border); background: var(--bg2);
+    }
+    .live-ptabs {
+      display: flex; gap: 0; flex-shrink: 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .live-ptab {
+      flex: 1; padding: 5px 4px; font-size: 0.68rem; font-weight: 600;
+      text-align: center; color: var(--muted); cursor: pointer;
+      background: none; border: none; border-bottom: 2px solid transparent;
+      transition: color .15s;
+    }
+    .live-ptab:hover { color: var(--text); }
+    .live-ptab.active { color: var(--elderly); border-bottom-color: var(--elderly); }
+    .live-ptab.active[data-key="first_time_user"] { color: var(--firsttime); border-bottom-color: var(--firsttime); }
+    #live-iframe {
+      width: 100%; height: 220px; border: none;
+      background: #111;
+    }
+    .live-iframe-placeholder {
+      height: 140px; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 6px;
+      color: var(--muted); font-size: 0.75rem; text-align: center; padding: 0 16px;
+    }
+    #live-waiting {
+      height: 140px; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 6px;
+    }
+    #live-waiting .lw-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: #444;
+      animation: pulse 1.5s ease-in-out infinite;
+    }
+    #live-waiting .lw-label { color: var(--muted); font-size: 0.72rem; }
 
     /* ── Screenshot strip (LIVE tab) ── */
     .shot-strip {
@@ -248,7 +292,7 @@
       flex-shrink: 0; position: relative; cursor: pointer;
     }
     .shot-thumb img {
-      width: 90px; height: 60px; object-fit: cover; object-position: top;
+      width: 150px; height: 100px; object-fit: cover; object-position: top;
       border-radius: 3px; display: block; border: 2px solid var(--border);
       transition: border-color .15s;
     }
@@ -323,7 +367,28 @@
 
   <!-- LIVE -->
   <div class="panel active" id="panel-live">
-    <div class="shot-strip" id="shot-strip"></div>
+    <!-- Live browser-use cloud iframe -->
+    <div class="live-iframe-wrap" id="live-iframe-wrap">
+      <div class="live-ptabs">
+        <button class="live-ptab active" data-key="elderly_user" onclick="switchLivePersona('elderly_user')">👴 Elderly</button>
+        <button class="live-ptab" data-key="first_time_user" onclick="switchLivePersona('first_time_user')">🆕 First-Time</button>
+      </div>
+      <!-- Waiting state (shown until session_live arrives) -->
+      <div id="live-waiting">
+        <div class="lw-dot"></div>
+        <div class="lw-label">Waiting for live session…<br><span style="font-size:0.65rem;opacity:.6">Requires BROWSER_USE_API_KEY</span></div>
+      </div>
+      <!-- Actual iframe (hidden until URL is ready) -->
+      <div id="live-iframe-inner" style="display:none">
+        <iframe id="live-iframe" src="" allow="autoplay; fullscreen" referrerpolicy="no-referrer-when-downgrade"></iframe>
+        <div id="live-iframe-blocked" style="display:none">
+          <div class="live-iframe-placeholder">
+            Live view blocked by site policy —
+            <a id="live-open-link" href="#" target="_blank" style="color:var(--accent2);margin-left:4px">Open in new tab →</a>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="log-toolbar">
       <span>Live Log</span>
       <button class="btn-sm" id="clear-btn">Clear</button>
@@ -357,6 +422,7 @@
     </div>
     <div class="fixes-footer" id="fixes-footer">
       <span class="fixes-counter" id="fixes-counter">0 accepted · 0 rejected</span>
+      <button class="revert-btn" id="revert-btn" onclick="revertFixes()">↩ Revert</button>
       <button class="apply-all-btn" id="apply-all-btn" disabled onclick="applyAccepted()">Apply All Accepted</button>
     </div>
   </div>

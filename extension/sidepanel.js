@@ -34,6 +34,12 @@ let frictionCount = 0;
 let ws = null;
 let visualFixes = [];     // array of visual_fix messages in arrival order
 let fixState = {};        // id → 'accepted' | 'rejected' | null
+let appliedStyleId = null; // ID of the injected <style> element (for revert)
+let liveUrls = {};        // persona_key → live URL string
+let mainTabUrl = "";       // URL of the clean "main" tab opened by Python
+
+// ── DOM refs (live iframe) ─────────────────────────────────────────────────────
+const liveIframe = document.getElementById("live-iframe");
 
 // ── DOM refs ───────────────────────────────────────────────────────────────────
 const wsDot      = document.getElementById("ws-dot");
@@ -48,7 +54,6 @@ const resultsBody= document.getElementById("results-body");
 const fixesBody  = document.getElementById("fixes-body");
 const badgeResults = document.getElementById("badge-results");
 const badgeFixes   = document.getElementById("badge-fixes");
-const shotStrip  = document.getElementById("shot-strip");
 const lightbox   = document.getElementById("lightbox");
 const lbImg      = document.getElementById("lb-img");
 const lbCaption  = document.getElementById("lb-caption");
@@ -93,21 +98,30 @@ function setWs(state) {
 // ── Dispatch ───────────────────────────────────────────────────────────────────
 function dispatch(m) {
   switch (m.type) {
-    case "pipeline_start":  onStart(m);      break;
-    case "task_list":       onTaskList(m);   break;
-    case "log":             onLog(m);        break;
-    case "screenshot":      onScreenshot(m); break;
-    case "persona_update":  onPersonaUpdate(m); break;
-    case "friction_found":  onFrictionFound(m); break;
-    case "visual_fix":      onVisualFix(m);  break;
-    case "pipeline_done":   onDone(m);       break;
+    case "pipeline_start":  onStart(m);         break;
+    case "task_list":       onTaskList(m);       break;
+    case "log":             onLog(m);            break;
+    case "screenshot":      onScreenshot(m);     break;
+    case "persona_update":  onPersonaUpdate(m);  break;
+    case "friction_found":  onFrictionFound(m);  break;
+    case "visual_fix":      onVisualFix(m);      break;
+    case "pipeline_done":   onDone(m);           break;
+    case "session_live":    onSessionLive(m);    break;
+    case "main_tab_ready":  onMainTabReady(m);   break;
   }
 }
 
 function onStart(m) {
   hdrUrl.textContent = m.url || "…";
+  mainTabUrl = m.url || "";
   taskCount = 0; completedRuns = {}; frictionCount = 0;
-  visualFixes = []; fixState = {};
+  visualFixes = []; fixState = {}; liveUrls = {}; appliedStyleId = null;
+  liveIframe.src = "";
+  // Reset live section back to waiting state
+  const waiting = document.getElementById("live-waiting");
+  const inner   = document.getElementById("live-iframe-inner");
+  if (waiting) waiting.style.display = "flex";
+  if (inner)   inner.style.display = "none";
   progFill.style.width = "0%";
   progLabel.innerHTML = "Pipeline started";
   progPct.textContent = "";
@@ -125,7 +139,6 @@ function onStart(m) {
   const applyBtn = document.getElementById("apply-all-btn");
   applyBtn.disabled = true;
   applyBtn.textContent = "Apply All Accepted";
-  shotStrip.innerHTML   = "";
   appendLog({ ts: now(), persona: "Pipeline", task_num: 0, msg: `▶ ${m.url}` });
 }
 
@@ -157,33 +170,79 @@ function onPersonaUpdate(m) {
 }
 
 function onScreenshot(m) {
-  if (!m.data) return;
-  const src = "data:image/png;base64," + m.data;
-  const persona = m.persona || "";
-  const color   = PERSONA_COLORS[persona] || "#888";
-  const caption = `T${m.task_num} · ${persona}`;
-
-  const thumb = document.createElement("div");
-  thumb.className = "shot-thumb";
-  thumb.innerHTML =
-    `<img src="${src}" alt="${esc(caption)}">` +
-    `<div class="shot-label" style="border-top:2px solid ${color}">${esc(caption)}</div>`;
-  thumb.addEventListener("click", () => {
-    lbImg.src = src;
-    lbCaption.textContent = caption;
-    lightbox.classList.add("open");
-  });
-
-  shotStrip.appendChild(thumb);
-  shotStrip.scrollLeft = shotStrip.scrollWidth;
-
-  // Log it too
-  appendLog({ ts: m.ts || now(), persona, task_num: m.task_num,
-               msg: `📸 screenshot → ${m.path || ""}` });
+  // Screenshots disabled — ignore
 }
 
 function onFrictionFound(m) {
   frictionCount = m.count ?? frictionCount + 1;
+}
+
+function onSessionLive(m) {
+  // m = { type: "session_live", persona_key, persona, live_url, session_id, task_num }
+  const key = m.persona_key || keyFromLabel(m.persona);
+  if (!key || !m.live_url) return;
+  liveUrls[key] = m.live_url;
+
+  // Show the iframe section
+  liveIframeWrap.classList.add("visible");
+
+  // If this persona's tab is currently active (or first one), show it
+  const activeTab = document.querySelector(".live-ptab.active");
+  const activeKey = activeTab ? activeTab.dataset.key : null;
+  if (!activeKey || activeKey === key) {
+    setLiveIframeSrc(m.live_url);
+    document.querySelectorAll(".live-ptab").forEach(t => {
+      t.classList.toggle("active", t.dataset.key === key);
+    });
+  }
+
+  appendLog({
+    ts: m.ts || now(), persona: m.persona || key, task_num: m.task_num || 0,
+    msg: `🔴 Live session ready`,
+  });
+}
+
+function onMainTabReady(m) {
+  mainTabUrl = m.url || mainTabUrl;
+  appendLog({ ts: m.ts || now(), persona: "Pipeline", task_num: 0, msg: "🏠 main tab opened" });
+}
+
+function switchLivePersona(key) {
+  document.querySelectorAll(".live-ptab").forEach(t => {
+    t.classList.toggle("active", t.dataset.key === key);
+  });
+  const url = liveUrls[key];
+  if (url) {
+    setLiveIframeSrc(url);
+  } else {
+    liveIframe.src = "";
+  }
+}
+
+function setLiveIframeSrc(url) {
+  // Hide waiting state, show iframe container
+  const waiting = document.getElementById("live-waiting");
+  const inner   = document.getElementById("live-iframe-inner");
+  const blocked = document.getElementById("live-iframe-blocked");
+  const link    = document.getElementById("live-open-link");
+
+  if (waiting) waiting.style.display = "none";
+  if (inner)   inner.style.display = "block";
+  liveIframe.style.display = "block";
+  if (blocked) blocked.style.display = "none";
+  if (link)    link.href = url;
+
+  liveIframe.src = url;
+
+  // Detect if iframe is blocked (X-Frame-Options / CSP) — show fallback after timeout
+  let loaded = false;
+  liveIframe.onload = () => { loaded = true; };
+  setTimeout(() => {
+    if (!loaded && blocked) {
+      liveIframe.style.display = "none";
+      blocked.style.display = "block";
+    }
+  }, 4000);
 }
 
 function switchTab(name) {
@@ -212,6 +271,28 @@ function onDone(m) {
 
   // Auto-switch to RESULTS tab
   switchTab("results");
+
+  // Switch Chrome to the clean main tab so audience sees the real site
+  switchToMainTab();
+}
+
+async function switchToMainTab() {
+  if (!mainTabUrl) return;
+  try {
+    const origin = new URL(mainTabUrl).origin;
+    const tabs = await chrome.tabs.query({ url: origin + "/*" });
+    // Prefer a tab whose URL is closest to mainTabUrl (not a persona tab)
+    // persona tabs have a colored banner injected but we can't distinguish by URL alone;
+    // pick the last-created match (main tab was opened first, personas after)
+    if (tabs.length > 0) {
+      // The main tab is opened FIRST by Python, so it has the lowest tab id
+      const mainTab = tabs.reduce((a, b) => a.id < b.id ? a : b);
+      await chrome.tabs.update(mainTab.id, { active: true });
+      await chrome.windows.update(mainTab.windowId, { focused: true });
+    }
+  } catch (err) {
+    // Not critical — silently ignore
+  }
 }
 
 // ── Progress ───────────────────────────────────────────────────────────────────
@@ -526,22 +607,43 @@ function openLightbox(src, caption) {
   lightbox.classList.add("open");
 }
 
+async function findMainTab() {
+  // Find the clean main tab by URL origin — Python opens it first so it has the smallest tab id
+  if (mainTabUrl) {
+    try {
+      const origin = new URL(mainTabUrl).origin;
+      const tabs = await chrome.tabs.query({ url: origin + "/*" });
+      if (tabs.length > 0) {
+        return tabs.reduce((a, b) => a.id < b.id ? a : b);
+      }
+    } catch (_) {}
+  }
+  // Fallback: active tab
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab || null;
+}
+
 async function applyAccepted() {
   const accepted = visualFixes.filter(f => fixState[f.id] === "accepted");
   if (!accepted.length) return;
 
   const css    = accepted.map(f => f.css || "").filter(Boolean).join("\n");
   const jsCode = accepted.map(f => f.js  || "").filter(Boolean).join(";\n");
+  const styleId = "upa-fix-" + Date.now();
 
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab) { alert("No active tab found."); return; }
+    const tab = await findMainTab();
+    if (!tab) { alert("No main tab found."); return; }
 
     await chrome.scripting.executeScript({
       target: { tabId: tab.id },
-      func: (css, jsCode) => {
+      func: (css, jsCode, styleId) => {
+        // Remove previous injection if any (idempotent re-apply)
+        const prev = document.getElementById(styleId);
+        if (prev) prev.remove();
         if (css) {
           const s = document.createElement("style");
+          s.id = styleId;
           s.textContent = css;
           document.head.appendChild(s);
         }
@@ -549,8 +651,16 @@ async function applyAccepted() {
           try { new Function(jsCode)(); } catch (e) { console.warn("Fix JS error:", e); }
         }
       },
-      args: [css, jsCode],
+      args: [css, jsCode, styleId],
     });
+
+    // Switch Chrome to the main tab so user can see the applied changes
+    await chrome.tabs.update(tab.id, { active: true });
+    await chrome.windows.update(tab.windowId, { focused: true });
+
+    appliedStyleId = styleId;
+    const revertBtn = document.getElementById("revert-btn");
+    if (revertBtn) revertBtn.style.display = "inline-block";
 
     const applyBtn = document.getElementById("apply-all-btn");
     applyBtn.textContent = "✓ Applied!";
@@ -559,10 +669,45 @@ async function applyAccepted() {
       applyBtn.textContent = "Apply All Accepted";
       applyBtn.style.cssText = "";
       updateFixCounter();
-    }, 3000);
+    }, 2500);
   } catch (err) {
     console.error("applyAccepted:", err);
     alert("Failed to apply: " + err.message);
+  }
+}
+
+async function revertFixes() {
+  if (!appliedStyleId) return;
+  const styleId = appliedStyleId;
+
+  try {
+    const tab = await findMainTab();
+    if (!tab) { alert("No main tab found."); return; }
+
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (styleId) => {
+        const el = document.getElementById(styleId);
+        if (el) el.remove();
+      },
+      args: [styleId],
+    });
+
+    appliedStyleId = null;
+    const revertBtn = document.getElementById("revert-btn");
+    if (revertBtn) revertBtn.style.display = "none";
+
+    const applyBtn = document.getElementById("apply-all-btn");
+    applyBtn.textContent = "↩ Reverted";
+    applyBtn.style.cssText = "background:#ff8800;color:#000";
+    setTimeout(() => {
+      applyBtn.textContent = "Apply All Accepted";
+      applyBtn.style.cssText = "";
+      updateFixCounter();
+    }, 2000);
+  } catch (err) {
+    console.error("revertFixes:", err);
+    alert("Failed to revert: " + err.message);
   }
 }
 

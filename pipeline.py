@@ -32,6 +32,8 @@ from fake_browser_use import (
     format_trace,
     run_task,
     run_tasks_multi_persona,
+    set_live_url_callback,
+    set_main_tab_callback,
 )
 
 # ---------------------------------------------------------------------------
@@ -49,14 +51,24 @@ class WebSocketBroadcaster:
     """
     Runs an asyncio WebSocket server in a background daemon thread.
     Sync code calls broadcast(msg_dict) which is thread-safe.
+
+    Replay buffer: key messages are buffered so a reconnecting extension
+    client immediately receives the latest pipeline state rather than
+    waiting for the next run.
     """
 
     PORT = 7655
+    # Message types replayed to new clients (in order received)
+    _REPLAY_TYPES = {"pipeline_start", "task_list", "persona_update",
+                     "friction_found", "visual_fix", "pipeline_done",
+                     "session_live", "main_tab_ready"}
 
     def __init__(self) -> None:
         self._clients: set = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._ready = threading.Event()
+        self._replay: list[str] = []   # JSON strings, cleared on pipeline_start
+        self._replay_lock = threading.Lock()
         if _WS_AVAILABLE:
             t = threading.Thread(target=self._run_server, daemon=True, name="ws-broadcaster")
             t.start()
@@ -71,6 +83,14 @@ class WebSocketBroadcaster:
         async def handler(ws):
             self._clients.add(ws)
             self._ready.set()
+            # Replay buffered messages so reconnecting clients catch up
+            with self._replay_lock:
+                snapshot = list(self._replay)
+            for data in snapshot:
+                try:
+                    await ws.send(data)
+                except Exception:
+                    break
             try:
                 await ws.wait_closed()
             finally:
@@ -86,9 +106,19 @@ class WebSocketBroadcaster:
 
     def broadcast(self, msg: dict) -> None:
         """Thread-safe: enqueue a JSON broadcast to all connected extension clients."""
-        if not _WS_AVAILABLE or not self._loop or not self._clients:
+        if not _WS_AVAILABLE or not self._loop:
             return
         data = json.dumps(msg)
+
+        # Update replay buffer
+        if msg.get("type") in self._REPLAY_TYPES:
+            with self._replay_lock:
+                if msg.get("type") == "pipeline_start":
+                    self._replay.clear()   # fresh run → reset buffer
+                self._replay.append(data)
+
+        if not self._clients:
+            return
 
         async def _send_all():
             dead = set()
@@ -200,19 +230,24 @@ def init_live_log(log_path: str) -> LogWriter:
             "msg": msg,
         })
 
-    def _screenshot_cb(label: str, task_num: int, b64_png: str, path: str) -> None:
-        """Broadcast a screenshot as base64 to the extension."""
+    def _live_url_cb(label: str, persona_key: str, task_num: int, live_url: str, session_id: str) -> None:
+        """Broadcast a browser-use cloud live URL to the extension."""
         _ws_broadcast({
-            "type": "screenshot",
-            "ts": datetime.now().strftime("%H:%M:%S"),
-            "persona": label,
-            "task_num": task_num,
-            "path": path,
-            "data": b64_png,   # base64-encoded PNG
+            "type":       "session_live",
+            "ts":         datetime.now().strftime("%H:%M:%S"),
+            "persona":    label,
+            "persona_key": persona_key,
+            "task_num":   task_num,
+            "live_url":   live_url,
+            "session_id": session_id,
         })
 
+    def _main_tab_cb(url: str) -> None:
+        _ws_broadcast({"type": "main_tab_ready", "url": url})
+
     _fbu.set_log_callback(_cb)
-    _fbu.set_screenshot_callback(_screenshot_cb)
+    set_live_url_callback(_live_url_cb)
+    set_main_tab_callback(_main_tab_cb)
     return _log_writer
 
 
@@ -674,10 +709,33 @@ def run_pipeline(url: str) -> dict:
     summary        = summarize_site(url)
     tasks          = generate_tasks(summary)
     persona_traces = execute_tasks_multi_persona(tasks, url)
-    multi_analysis = analyze_multi_persona(persona_traces)
 
-    friction_points = multi_analysis.get("friction_points", [])
-    visual_fixes    = generate_visual_fixes(friction_points, url)
+    _pipeline_log("Tasks complete — running analysis...")
+    _ws_broadcast({"type": "log", "ts": datetime.now().strftime("%H:%M:%S"),
+                   "persona": "Pipeline", "task_num": 0,
+                   "msg": "⏳ Analysing friction across personas…"})
+    print("[4/5] Running friction analysis ...")
+
+    multi_analysis  = {"friction_points": [], "summary": "", "severity_map": {},
+                       "persona_stats": {}, "persona_summary": {}}
+    friction_points: list[dict] = []
+    visual_fixes:    list[dict] = []
+
+    try:
+        multi_analysis  = analyze_multi_persona(persona_traces)
+        friction_points = multi_analysis.get("friction_points", [])
+    except Exception as exc:
+        _pipeline_log(f"Analysis error: {exc}")
+        print(f"[4/5] Analysis failed: {exc}", flush=True)
+
+    _ws_broadcast({"type": "log", "ts": datetime.now().strftime("%H:%M:%S"),
+                   "persona": "Pipeline", "task_num": 0,
+                   "msg": "⏳ Generating visual fix recommendations…"})
+    try:
+        visual_fixes = generate_visual_fixes(friction_points, url)
+    except Exception as exc:
+        _pipeline_log(f"Visual fixes error: {exc}")
+        print(f"[5/5] Visual fixes failed: {exc}", flush=True)
 
     results = {
         "url":            url,
@@ -691,7 +749,6 @@ def run_pipeline(url: str) -> dict:
     # ── Broadcast full results to extension ───────────────────────────────────
     _pipeline_log("Pipeline complete — broadcasting results to extension...")
 
-    # Build a compact per-task, per-persona result table for the extension
     personas = list(PERSONA_PROFILES.keys())
     task_results = []
     for i, task in enumerate(tasks):
