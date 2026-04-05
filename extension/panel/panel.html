@@ -87,6 +87,12 @@
 
         <!-- Progress Section -->
         <section id="progressSection" class="tab-content" data-tab="progress" style="display:none;">
+            <div class="mascot-progress" id="mascotProgress">
+                <img class="mascot-progress-img" src="../icons/normal.svg" alt="Agent UX mascot">
+                <div class="mascot-glow"></div>
+                <div class="mascot-progress-title">Preparing Tests</div>
+                <div class="mascot-progress-status" id="mascotStatus">Initializing agents...</div>
+            </div>
             <div class="progress-header">
                 <span class="progress-label" id="progressLabel">Starting agents...</span>
                 <span class="progress-percent" id="progressPercent">0%</span>
@@ -120,6 +126,13 @@
 
         <!-- Results Section -->
         <section id="resultsSection" class="tab-content" data-tab="results" style="display:none;">
+            <div class="mascot-results">
+                <img class="mascot-celebrate" src="../icons/yay!!.svg" alt="Celebration mascot">
+                <div class="mascot-results-text">
+                    <div class="mascot-results-title">Analysis Complete!</div>
+                    <div class="mascot-results-sub">Here's what our agents found on your page</div>
+                </div>
+            </div>
             <div class="results-header">
                 <h2>Issues Found</h2>
                 <span class="issue-count" id="issueCount">0</span>

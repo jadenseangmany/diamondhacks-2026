@@ -472,6 +472,32 @@ function updateProgress(data) {
     document.getElementById('progressPercent').textContent = `${Math.round(data.progress)}%`;
     document.getElementById('progressFill').style.width = `${data.progress}%`;
 
+    // Update mascot image + status text
+    const mascotImg = document.querySelector('.mascot-progress-img');
+    const mascotStatus = document.getElementById('mascotStatus');
+    if (mascotStatus) {
+        const step = data.current_step || data.status || '';
+        const thinkingFaces = ['../icons/hmmm.svg', '../icons/oh well...svg'];
+        if (mascotImg) {
+            // Cycle between thinking/hmmm during progress
+            const cycleIdx = Math.floor(Date.now() / 3000) % thinkingFaces.length;
+            mascotImg.src = thinkingFaces[cycleIdx];
+        }
+        if (step.includes('EXECUTING') || step.includes('executing')) {
+            mascotStatus.textContent = 'Agents are browsing your page...';
+        } else if (step.includes('ANALYZING') || step.includes('analyzing')) {
+            mascotStatus.textContent = 'Analyzing agent feedback...';
+        } else if (step.includes('SUGGESTING') || step.includes('suggesting')) {
+            mascotStatus.textContent = 'Generating improvement suggestions...';
+        } else if (step.includes('SUMMARIZING') || step.includes('summarizing')) {
+            mascotStatus.textContent = 'Summarizing your page...';
+        } else if (step.includes('GENERATING') || step.includes('generating')) {
+            mascotStatus.textContent = 'Creating test tasks...';
+        } else {
+            mascotStatus.textContent = step || 'Initializing agents...';
+        }
+    }
+
     // Render agent status
     const statusEl = document.getElementById('agentStatus');
     if (data.persona_results && data.persona_results.length > 0) {
@@ -608,6 +634,11 @@ function updateProgress(data) {
 
 // ── Results ──────────────────────────────────────────────────────────────────
 function showResults(data) {
+    // Set results mascot to happy/yay randomly
+    const celebImg = document.querySelector('.mascot-celebrate');
+    if (celebImg) {
+        celebImg.src = Math.random() < 0.5 ? '../icons/yay!!.svg' : '../icons/happy hi.svg';
+    }
     // Dismiss fullscreen preview
     if (fullscreenPreviewActive) {
         fullscreenPreviewActive = false;
