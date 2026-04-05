@@ -231,7 +231,7 @@ async def step_generate_tasks(run: TestRun, on_progress: ProgressCallback = None
 async def step_execute_personas(run: TestRun, on_progress: ProgressCallback = None, selected_personas: list = None) -> TestRun:
     """Run all persona agents in parallel to execute usability tasks."""
     run.status = RunStatus.EXECUTING
-    run.current_step = "Step 3-4: Executing tasks with all personas..."
+    run.current_step = "Step 1: Executing tasks with all personas..."
     run.progress = 35.0
     if on_progress:
         on_progress(run)
@@ -580,7 +580,7 @@ async def _run_single_persona(
 async def step_analyze(run: TestRun, on_progress: ProgressCallback = None) -> TestRun:
     """Build confusion heatmap and compute scores."""
     run.status = RunStatus.ANALYZING
-    run.current_step = "Step 5: Analyzing results & building heatmap..."
+    run.current_step = "Step 2: Analyzing results & building heatmap..."
     run.progress = 72.0
     if on_progress:
         on_progress(run)
@@ -612,7 +612,7 @@ async def step_analyze(run: TestRun, on_progress: ProgressCallback = None) -> Te
 async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback = None) -> TestRun:
     """LLM aggregates feedback into actionable edits."""
     run.status = RunStatus.SUGGESTING
-    run.current_step = "Step 6: Generating improvement suggestions..."
+    run.current_step = "Step 3: Generating improvement suggestions..."
     run.progress = 80.0
     if on_progress:
         on_progress(run)
@@ -711,7 +711,7 @@ async def step_suggest_improvements(run: TestRun, on_progress: ProgressCallback 
 async def step_validate_edits(run: TestRun, on_progress: ProgressCallback = None) -> TestRun:
     """Uses Playwright to physically inject AI code and verify it renders visual changes."""
     run.status = RunStatus.VALIDATING_EDITS
-    run.current_step = "Step 6.5: Validating edits on live DOM..."
+    run.current_step = "Step 4: Validating edits on live DOM..."
     if on_progress:
         on_progress(run)
 
@@ -788,7 +788,7 @@ async def step_validate_edits(run: TestRun, on_progress: ProgressCallback = None
 async def step_apply_edits(run: TestRun, on_progress: ProgressCallback = None) -> TestRun:
     """After human approval, agent applies changes to the website."""
     run.status = RunStatus.APPLYING_EDITS
-    run.current_step = "Step 7: Applying approved edits..."
+    run.current_step = "Step 5: Applying approved edits..."
     run.progress = 92.0
     if on_progress:
         on_progress(run)

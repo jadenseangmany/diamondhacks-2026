@@ -24,6 +24,9 @@ let activeTab = 'setup';
 let fullscreenPreviewActive = false;
 let lastLivePreviews = [];
 let activeTabId = null;
+let pageSummary = '';
+let generatedTasks = [];
+let taskCount = 2;
 
 // ── Tab Navigation ──────────────────────────────────────────────────────────
 function switchTab(tabName) {
@@ -245,13 +248,13 @@ document.addEventListener('DOMContentLoaded', async () => {
         updatePersonaCount();
     });
 
+    // Generate tasks button
+    document.getElementById('generateTasksBtn').addEventListener('click', generateTasks);
+
     // Evaluate button
     document.getElementById('evaluateBtn').addEventListener('click', startEvaluation);
 
-    // Header restart button
-    document.getElementById('restartHeaderBtn').addEventListener('click', resetUI);
-
-    // Global Force Clear Fixes
+    // Header clear fixes button
     document.getElementById('clearAllFixesBtn').addEventListener('click', async () => {
         try {
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -276,15 +279,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     document.getElementById('restartBtnResults').addEventListener('click', resetUI);
 
     // Task count controls
-    const range = document.getElementById('taskCountRange');
-    const countLabel = document.getElementById('taskCountValue');
-    range.addEventListener('input', () => { countLabel.textContent = range.value; });
     document.getElementById('taskCountUp').addEventListener('click', () => {
-        if (parseInt(range.value) < 5) { range.value = parseInt(range.value) + 1; countLabel.textContent = range.value; }
+        if (taskCount < 5) { taskCount++; document.getElementById('taskCountValue').textContent = taskCount; }
     });
     document.getElementById('taskCountDown').addEventListener('click', () => {
-        if (parseInt(range.value) > 1) { range.value = parseInt(range.value) - 1; countLabel.textContent = range.value; }
+        if (taskCount > 1) { taskCount--; document.getElementById('taskCountValue').textContent = taskCount; }
     });
+
+    // Add custom task toggle + submit
+    document.getElementById('toggleAddTaskBtn').addEventListener('click', () => {
+        const form = document.getElementById('addTaskForm');
+        form.style.display = form.style.display === 'none' ? 'flex' : 'none';
+    });
+    document.getElementById('addCustomTaskBtn').addEventListener('click', addCustomTask);
 
     // Restart testing button (progress page)
     document.getElementById('restartBtnProgress')?.addEventListener('click', resetUI);
@@ -366,10 +373,206 @@ async function restoreState() {
     }
 }
 
-// ── Evaluate ─────────────────────────────────────────────────────────────────
+// ── Setup Flow ──────────────────────────────────────────────────────────────
 function updatePersonaCount() {
     const count = document.querySelectorAll('.persona-chip.active').length;
     document.getElementById('personaCount').textContent = `${count} selected`;
+}
+
+async function generateTasks() {
+    const btn = document.getElementById('generateTasksBtn');
+    const mascot = document.getElementById('taskGenMascot');
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+    mascot.style.display = '';
+
+    try {
+        // Summarize in background if not already done
+        if (!pageSummary) {
+            const sumResp = await fetch(`${API_BASE}/api/summarize`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: currentUrl }),
+            });
+            if (!sumResp.ok) throw new Error(`Summarize failed: HTTP ${sumResp.status}`);
+            const sumData = await sumResp.json();
+            pageSummary = sumData.summary;
+        }
+
+        const resp = await fetch(`${API_BASE}/api/generate-tasks`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                url: currentUrl,
+                summary: pageSummary,
+                num_tasks: taskCount,
+            }),
+        });
+
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+        const data = await resp.json();
+        generatedTasks = data.tasks;
+        renderTaskCards();
+    } catch (err) {
+        console.error('Task generation failed:', err);
+        alert('Failed to generate tasks. Make sure the backend is running on port 8000.');
+    } finally {
+        mascot.style.display = 'none';
+        btn.disabled = false;
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg> Generate Tasks';
+    }
+}
+
+let editingTaskIndex = null;
+
+function updateEvalButton() {
+    const btn = document.getElementById('evaluateBtn');
+    if (generatedTasks.length > 0) {
+        btn.disabled = false;
+        btn.classList.remove('btn-evaluate-disabled');
+    } else {
+        btn.disabled = true;
+        btn.classList.add('btn-evaluate-disabled');
+    }
+}
+
+function renderTaskCards() {
+    const container = document.getElementById('taskCards');
+    editingTaskIndex = null;
+
+    if (generatedTasks.length === 0) {
+        container.innerHTML = '<div class="task-cards-empty" id="taskCardsEmpty">Click "Generate Tasks" to create test tasks from the page summary</div>';
+        document.getElementById('toggleAddTaskBtn').style.display = 'none';
+        updateEvalButton();
+        return;
+    }
+
+    document.getElementById('toggleAddTaskBtn').style.display = '';
+
+    container.innerHTML = generatedTasks.map((task, i) => `
+        <div class="task-card" data-index="${i}">
+            <span class="task-card-number">${i + 1}</span>
+            <div class="task-card-content" data-index="${i}">
+                <div class="task-card-title">${escapeHtml(task.title)}</div>
+                <div class="task-card-desc">${escapeHtml(task.description)}</div>
+            </div>
+            <button class="task-card-delete" data-index="${i}" title="Remove task">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+    `).join('');
+
+    // Attach delete handlers
+    container.querySelectorAll('.task-card-delete').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const idx = parseInt(e.currentTarget.dataset.index);
+            generatedTasks.splice(idx, 1);
+            renderTaskCards();
+        });
+    });
+
+    // Attach click-to-edit handlers
+    container.querySelectorAll('.task-card-content').forEach(el => {
+        el.addEventListener('click', (e) => {
+            const idx = parseInt(e.currentTarget.dataset.index);
+            openTaskEditor(idx);
+        });
+    });
+
+    updateEvalButton();
+}
+
+function openTaskEditor(index) {
+    // If already editing this one, do nothing
+    if (editingTaskIndex === index) return;
+
+    // Commit any open editor first (without re-rendering)
+    commitOpenEditor();
+
+    editingTaskIndex = index;
+    const task = generatedTasks[index];
+    const card = document.querySelector(`.task-card[data-index="${index}"]`);
+    if (!card) return;
+
+    card.classList.add('task-card-editing');
+    const content = card.querySelector('.task-card-content');
+
+    content.innerHTML = `
+        <input type="text" class="task-edit-title" value="${escapeHtml(task.title)}">
+        <textarea class="task-edit-desc">${escapeHtml(task.description)}</textarea>
+        <button type="button" class="task-edit-save">Done</button>
+    `;
+
+    const titleInput = content.querySelector('.task-edit-title');
+    const descInput = content.querySelector('.task-edit-desc');
+
+    // Auto-size textarea to fit content
+    requestAnimationFrame(() => {
+        descInput.style.height = 'auto';
+        descInput.style.height = Math.max(60, descInput.scrollHeight) + 'px';
+    });
+
+    titleInput.focus();
+
+    // Stop clicks inside the editor from bubbling to the content click handler
+    content.addEventListener('click', (e) => e.stopPropagation());
+
+    content.querySelector('.task-edit-save').addEventListener('click', (e) => {
+        e.stopPropagation();
+        commitOpenEditor();
+        renderTaskCards();
+    });
+
+    titleInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            commitOpenEditor();
+            renderTaskCards();
+        }
+    });
+
+    descInput.addEventListener('input', () => {
+        descInput.style.height = 'auto';
+        descInput.style.height = descInput.scrollHeight + 'px';
+    });
+}
+
+function commitOpenEditor() {
+    if (editingTaskIndex === null) return;
+    const card = document.querySelector(`.task-card[data-index="${editingTaskIndex}"]`);
+    if (!card) { editingTaskIndex = null; return; }
+    const titleInput = card.querySelector('.task-edit-title');
+    const descInput = card.querySelector('.task-edit-desc');
+    if (titleInput && descInput) {
+        generatedTasks[editingTaskIndex].title = titleInput.value.trim() || generatedTasks[editingTaskIndex].title;
+        generatedTasks[editingTaskIndex].description = descInput.value.trim() || generatedTasks[editingTaskIndex].description;
+    }
+    editingTaskIndex = null;
+}
+
+function addCustomTask() {
+    const titleInput = document.getElementById('customTaskTitle');
+    const descInput = document.getElementById('customTaskDesc');
+
+    if (!titleInput.value.trim()) {
+        alert('Please provide a task title.');
+        return;
+    }
+
+    generatedTasks.push({
+        id: 'custom-' + Date.now(),
+        title: titleInput.value.trim(),
+        description: descInput.value.trim() || titleInput.value.trim(),
+        expected_outcome: '',
+        priority: 'medium',
+    });
+
+    titleInput.value = '';
+    descInput.value = '';
+    document.getElementById('addTaskForm').style.display = 'none';
+    renderTaskCards();
 }
 
 async function startEvaluation() {
@@ -386,6 +589,15 @@ async function startEvaluation() {
         return;
     }
 
+    if (generatedTasks.length === 0) {
+        // Flash the generate button to guide user
+        const genBtn = document.getElementById('generateTasksBtn');
+        genBtn.classList.remove('flash');
+        void genBtn.offsetWidth; // force reflow
+        genBtn.classList.add('flash');
+        return;
+    }
+
     const btn = document.getElementById('evaluateBtn');
     btn.disabled = true;
     btn.innerHTML = '<span>Starting...</span>';
@@ -395,13 +607,13 @@ async function startEvaluation() {
     switchTab('progress');
 
     try {
-        const resp = await fetch(`${API_BASE}/api/test`, {
+        const resp = await fetch(`${API_BASE}/api/execute`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 url: currentUrl,
                 personas,
-                num_tasks: parseInt(document.getElementById('taskCountRange').value),
+                tasks: generatedTasks,
             }),
         });
 
@@ -924,11 +1136,22 @@ function resetUI() {
     lastLogCount = 0;
     lastLivePreviews = [];
     issues = [];
+    pageSummary = '';
+    generatedTasks = [];
+    taskCount = 2;
+    editingTaskIndex = null;
 
     // Reset tab states
     document.getElementById('tabProgress').disabled = true;
     document.getElementById('tabResults').disabled = true;
     switchTab('setup');
+
+    // Reset setup steps
+    document.getElementById('toggleAddTaskBtn').style.display = 'none';
+    document.getElementById('addTaskForm').style.display = 'none';
+    document.getElementById('taskCards').innerHTML = '<div class="task-cards-empty" id="taskCardsEmpty">Click "Generate Tasks" to create test tasks from the page summary</div>';
+    document.getElementById('taskCountValue').textContent = '2';
+    updateEvalButton();
 
     const liveBrowsers = document.getElementById('liveBrowsers');
     if (liveBrowsers) { liveBrowsers.innerHTML = ''; liveBrowsers.style.display = ''; }
@@ -939,7 +1162,7 @@ function resetUI() {
     btn.disabled = false;
     btn.innerHTML = `
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-        <span>Evaluate This Page</span>
+        <span>Run Evaluation</span>
     `;
     clearState();
 }

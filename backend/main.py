@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from models import RunStatus, TestRun
 from personas import get_all_personas
-from pipeline import run_pipeline, step_apply_edits, step_regression_test
+from pipeline import run_pipeline, step_apply_edits, step_regression_test, step_summarize, step_generate_tasks
 
 load_dotenv(override=True)
 
@@ -61,6 +61,22 @@ class TestRequest(BaseModel):
     url: str
     personas: list[Any] = []  # Can perfectly handle string keys or custom dict payloads
     num_tasks: int = 2  # Number of usability testing tasks to generate
+
+
+class SummarizeRequest(BaseModel):
+    url: str
+
+
+class GenerateTasksRequest(BaseModel):
+    url: str
+    summary: str
+    num_tasks: int = 2
+
+
+class ExecuteRequest(BaseModel):
+    url: str
+    personas: list[Any] = []
+    tasks: list[dict] = []
 
 
 class ApprovalRequest(BaseModel):
@@ -159,6 +175,64 @@ async def root():
 async def list_personas():
     """List all available agent personas."""
     return {"personas": get_all_personas()}
+
+
+@app.post("/api/summarize")
+async def summarize_page(request: SummarizeRequest):
+    """Summarize a webpage without starting the full pipeline."""
+    run = TestRun(url=request.url)
+    try:
+        run = await step_summarize(run)
+        return {"summary": run.site_summary, "url": run.url}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Summarization failed: {str(e)}")
+
+
+@app.post("/api/generate-tasks")
+async def generate_tasks(request: GenerateTasksRequest):
+    """Generate usability tasks from a page summary."""
+    run = TestRun(url=request.url)
+    run.site_summary = request.summary
+    try:
+        run = await step_generate_tasks(run, num_tasks=request.num_tasks)
+        return {"tasks": [t.model_dump() for t in run.tasks]}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Task generation failed: {str(e)}")
+
+
+@app.post("/api/execute")
+async def execute_test(request: ExecuteRequest):
+    """Start test execution with user-provided tasks (skips summarize & generate)."""
+    from models import UsabilityTask
+
+    run = TestRun(url=request.url)
+    run.tasks = [UsabilityTask(**t) for t in request.tasks]
+    runs_store[run.id] = run
+
+    asyncio.create_task(_run_execute_background(run, request.personas))
+
+    return {
+        "id": run.id,
+        "status": "started",
+        "url": run.url,
+        "message": f"Execution started for {run.url} with {len(run.tasks)} tasks",
+    }
+
+
+async def _run_execute_background(run: TestRun, selected_personas: list[Any]):
+    """Run execution pipeline (steps 3-6) in background."""
+    from pipeline import step_execute_personas, step_analyze, step_suggest_improvements, step_validate_edits
+    try:
+        run = await step_execute_personas(run, sync_broadcast, selected_personas)
+        run = await step_analyze(run, sync_broadcast)
+        run = await step_suggest_improvements(run, sync_broadcast)
+        run = await step_validate_edits(run, sync_broadcast)
+    except Exception as e:
+        run.status = RunStatus.FAILED
+        run.log_messages.append(f"[ERROR] Pipeline failed: {str(e)}")
+    finally:
+        runs_store[run.id] = run
+        await broadcast_update(run)
 
 
 @app.post("/api/test")
