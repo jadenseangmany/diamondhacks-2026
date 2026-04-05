@@ -61,6 +61,117 @@ function sendToActiveTab(message) {
     });
 }
 
+// ── Fullscreen Preview (injected directly via chrome.scripting) ─────────────
+async function injectFullscreenPreview(previews) {
+    if (!activeTabId || !previews || previews.length === 0) return;
+
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId: activeTabId },
+            args: [previews],
+            func: (previews) => {
+                const CONTAINER_ID = 'agentux-live-preview-overlay';
+                const STYLE_ID = 'agentux-preview-styles';
+
+                // Remove existing
+                const existing = document.getElementById(CONTAINER_ID);
+                if (existing) existing.remove();
+
+                const count = previews.length;
+                let gridCols, gridRows;
+                if (count === 1) { gridCols = '1fr'; gridRows = '1fr'; }
+                else if (count === 2) { gridCols = '1fr 1fr'; gridRows = '1fr'; }
+                else if (count <= 4) { gridCols = '1fr 1fr'; gridRows = count <= 2 ? '1fr' : '1fr 1fr'; }
+                else { gridCols = '1fr 1fr 1fr'; gridRows = `repeat(${Math.ceil(count / 3)}, 1fr)`; }
+
+                const container = document.createElement('div');
+                container.id = CONTAINER_ID;
+                container.style.cssText = `
+                    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                    z-index: 2147483647; background: #0F1115;
+                    display: grid; grid-template-columns: ${gridCols}; grid-template-rows: ${gridRows};
+                    gap: 2px; font-family: -apple-system, sans-serif;
+                `;
+
+                const COLORS = { elderly: '#0084FF', millennial: '#66B3FF', first_time: '#0084FF', gen_z: '#66B3FF' };
+
+                previews.forEach(p => {
+                    const color = COLORS[p.persona_type] || '#34d399';
+                    const isDone = p.status === 'completed';
+
+                    const cell = document.createElement('div');
+                    cell.style.cssText = 'display:flex; flex-direction:column; min-height:0; background:#171A21;';
+
+                    const label = document.createElement('div');
+                    label.style.cssText = `display:flex; align-items:center; gap:8px; padding:8px 14px; background:#1E2430; border-bottom:2px solid ${color}; flex-shrink:0;`;
+
+                    const badge = document.createElement('span');
+                    badge.style.cssText = `font-size:12px; font-weight:700; color:white; padding:3px 10px; background:${color}; border-radius:9999px;`;
+                    badge.textContent = p.persona_name;
+
+                    const dot = document.createElement('span');
+                    dot.style.cssText = `width:8px; height:8px; border-radius:50%; background:${isDone ? '#5A6577' : '#34d399'}; margin-left:auto;`;
+                    if (!isDone) dot.style.animation = 'agentux-pulse 1.5s ease-in-out infinite';
+
+                    label.appendChild(badge);
+                    if (isDone) {
+                        const check = document.createElement('span');
+                        check.style.cssText = 'font-size:11px; color:#AAB4C0; font-weight:600;';
+                        check.textContent = '✓ Done';
+                        label.appendChild(check);
+                    }
+                    label.appendChild(dot);
+
+                    const iframe = document.createElement('iframe');
+                    iframe.src = p.live_url;
+                    iframe.allow = 'autoplay; clipboard-write';
+                    iframe.sandbox = 'allow-same-origin allow-scripts allow-popups allow-forms';
+                    iframe.style.cssText = 'flex:1; width:100%; border:none; background:white; min-height:0;';
+
+                    cell.appendChild(label);
+                    cell.appendChild(iframe);
+                    container.appendChild(cell);
+                });
+
+                // Inject pulse animation
+                let styleEl = document.getElementById(STYLE_ID);
+                if (!styleEl) {
+                    styleEl = document.createElement('style');
+                    styleEl.id = STYLE_ID;
+                    styleEl.textContent = '@keyframes agentux-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(0.8)} }';
+                    document.head.appendChild(styleEl);
+                }
+
+                document.body.style.overflow = 'hidden';
+                document.body.appendChild(container);
+            },
+        });
+    } catch (e) {
+        console.error('[AgentUX] Failed to inject fullscreen preview:', e);
+    }
+}
+
+async function removeFullscreenPreview() {
+    if (!activeTabId) return;
+
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId: activeTabId },
+            func: () => {
+                const el = document.getElementById('agentux-live-preview-overlay');
+                if (el) {
+                    el.remove();
+                    document.body.style.overflow = '';
+                }
+                const style = document.getElementById('agentux-preview-styles');
+                if (style) style.remove();
+            },
+        });
+    } catch (e) {
+        console.error('[AgentUX] Failed to remove fullscreen preview:', e);
+    }
+}
+
 // Keep activeTabId in sync when user switches tabs
 chrome.tabs.onActivated.addListener(async (activeInfo) => {
     activeTabId = activeInfo.tabId;
@@ -173,19 +284,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Fullscreen live preview toggle
     document.getElementById('fullscreenToggle').addEventListener('change', async (e) => {
         fullscreenPreviewActive = e.target.checked;
-
-        // Always refresh the tab ID before sending
         await getActiveTab();
 
         if (fullscreenPreviewActive && lastLivePreviews.length > 0) {
-            sendToActiveTab({
-                type: 'show_live_previews',
-                previews: lastLivePreviews,
-            });
-        } else if (fullscreenPreviewActive && lastLivePreviews.length === 0) {
-            console.warn('[AgentUX] Toggle ON but no live previews available yet');
-        } else {
-            sendToActiveTab({ type: 'hide_live_previews' });
+            await injectFullscreenPreview(lastLivePreviews);
+        } else if (!fullscreenPreviewActive) {
+            await removeFullscreenPreview();
         }
     });
 
@@ -434,10 +538,7 @@ function updateProgress(data) {
         lastLivePreviews = newPreviews;
 
         if (fullscreenPreviewActive && previewsChanged && newPreviews.length > 0) {
-            sendToActiveTab({
-                type: 'show_live_previews',
-                previews: newPreviews,
-            });
+            injectFullscreenPreview(newPreviews);
         }
 
         // Sidebar iframes
@@ -488,7 +589,7 @@ function showResults(data) {
     if (fullscreenPreviewActive) {
         fullscreenPreviewActive = false;
         document.getElementById('fullscreenToggle').checked = false;
-        sendToActiveTab({ type: 'hide_live_previews' });
+        removeFullscreenPreview();
     }
     lastLivePreviews = [];
 
@@ -836,7 +937,7 @@ function resetUI() {
     if (fullscreenPreviewActive) {
         fullscreenPreviewActive = false;
         document.getElementById('fullscreenToggle').checked = false;
-        sendToActiveTab({ type: 'hide_live_previews' });
+        removeFullscreenPreview();
     }
 
     document.getElementById('evaluateSection').style.display = 'block';
