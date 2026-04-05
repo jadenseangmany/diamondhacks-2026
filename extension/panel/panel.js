@@ -21,6 +21,9 @@ let currentRunId = null;
 let pollInterval = null;
 let issues = [];
 let activeTab = 'setup';
+let fullscreenPreviewActive = false;
+let lastLivePreviews = [];
+let activeTabId = null;
 
 // ── Tab Navigation ──────────────────────────────────────────────────────────
 function switchTab(tabName) {
@@ -44,10 +47,148 @@ function enableTab(tabName) {
     if (tab) tab.disabled = false;
 }
 
+// ── Tab helpers ─────────────────────────────────────────────────────────────
+async function getActiveTab() {
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+        if (tab && tab.id) {
+            activeTabId = tab.id;
+            return tab;
+        }
+    } catch (e) { /* ignore */ }
+    try {
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (tab && tab.id) {
+            activeTabId = tab.id;
+            return tab;
+        }
+    } catch (e) { /* ignore */ }
+    return null;
+}
+
+// ── Fullscreen Preview (injected directly via chrome.scripting) ─────────────
+async function injectFullscreenPreview(previews) {
+    if (!activeTabId || !previews || previews.length === 0) return;
+
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId: activeTabId },
+            args: [previews],
+            func: (previews) => {
+                const CONTAINER_ID = 'agentux-live-preview-overlay';
+                const STYLE_ID = 'agentux-preview-styles';
+
+                const existing = document.getElementById(CONTAINER_ID);
+                if (existing) existing.remove();
+
+                const count = previews.length;
+                let gridCols, gridRows;
+                if (count === 1) { gridCols = '1fr'; gridRows = '1fr'; }
+                else if (count === 2) { gridCols = '1fr 1fr'; gridRows = '1fr'; }
+                else if (count <= 4) { gridCols = '1fr 1fr'; gridRows = count <= 2 ? '1fr' : '1fr 1fr'; }
+                else { gridCols = '1fr 1fr 1fr'; gridRows = `repeat(${Math.ceil(count / 3)}, 1fr)`; }
+
+                const container = document.createElement('div');
+                container.id = CONTAINER_ID;
+                container.style.cssText = `
+                    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+                    z-index: 2147483647; background: #0F1115;
+                    display: grid; grid-template-columns: ${gridCols}; grid-template-rows: ${gridRows};
+                    gap: 2px; font-family: -apple-system, sans-serif;
+                `;
+
+                const COLORS = { elderly: '#0084FF', first_time_user: '#22d3ee' };
+
+                previews.forEach(p => {
+                    const color = COLORS[p.persona_type] || '#34d399';
+                    const isDone = p.status === 'completed';
+
+                    const cell = document.createElement('div');
+                    cell.style.cssText = 'display:flex; flex-direction:column; min-height:0; background:#171A21;';
+
+                    const label = document.createElement('div');
+                    label.style.cssText = `display:flex; align-items:center; gap:8px; padding:8px 14px; background:#1E2430; border-bottom:2px solid ${color}; flex-shrink:0;`;
+
+                    const badge = document.createElement('span');
+                    badge.style.cssText = `font-size:12px; font-weight:700; color:white; padding:3px 10px; background:${color}; border-radius:9999px;`;
+                    badge.textContent = p.persona_name;
+
+                    const dot = document.createElement('span');
+                    dot.style.cssText = `width:8px; height:8px; border-radius:50%; background:${isDone ? '#5A6577' : '#34d399'}; margin-left:auto;`;
+                    if (!isDone) dot.style.animation = 'agentux-pulse 1.5s ease-in-out infinite';
+
+                    label.appendChild(badge);
+                    if (isDone) {
+                        const check = document.createElement('span');
+                        check.style.cssText = 'font-size:11px; color:#AAB4C0; font-weight:600;';
+                        check.textContent = '\u2713 Done';
+                        label.appendChild(check);
+                    }
+                    label.appendChild(dot);
+
+                    const iframe = document.createElement('iframe');
+                    iframe.src = p.live_url;
+                    iframe.allow = 'autoplay; clipboard-write';
+                    iframe.sandbox = 'allow-same-origin allow-scripts allow-popups allow-forms';
+                    iframe.style.cssText = 'flex:1; width:100%; border:none; background:white; min-height:0;';
+
+                    cell.appendChild(label);
+                    cell.appendChild(iframe);
+                    container.appendChild(cell);
+                });
+
+                let styleEl = document.getElementById(STYLE_ID);
+                if (!styleEl) {
+                    styleEl = document.createElement('style');
+                    styleEl.id = STYLE_ID;
+                    styleEl.textContent = '@keyframes agentux-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(0.8)} }';
+                    document.head.appendChild(styleEl);
+                }
+
+                document.body.style.overflow = 'hidden';
+                document.body.appendChild(container);
+            },
+        });
+    } catch (e) {
+        console.error('[AgentUX] Failed to inject fullscreen preview:', e);
+    }
+}
+
+async function removeFullscreenPreview() {
+    if (!activeTabId) return;
+
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId: activeTabId },
+            func: () => {
+                const el = document.getElementById('agentux-live-preview-overlay');
+                if (el) {
+                    el.remove();
+                    document.body.style.overflow = '';
+                }
+                const style = document.getElementById('agentux-preview-styles');
+                if (style) style.remove();
+            },
+        });
+    } catch (e) {
+        console.error('[AgentUX] Failed to remove fullscreen preview:', e);
+    }
+}
+
+// Keep activeTabId in sync when user switches tabs
+chrome.tabs.onActivated.addListener(async (activeInfo) => {
+    activeTabId = activeInfo.tabId;
+    if (fullscreenPreviewActive) {
+        fullscreenPreviewActive = false;
+        const toggle = document.getElementById('fullscreenToggle');
+        if (toggle) toggle.checked = false;
+    }
+});
+
 // ── Init ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
     // Get current tab URL
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getActiveTab();
     if (tab) {
         currentUrl = tab.url;
         document.getElementById('pageUrl').textContent = currentUrl;
@@ -143,6 +284,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     document.getElementById('taskCountDown').addEventListener('click', () => {
         if (parseInt(range.value) > 1) { range.value = parseInt(range.value) - 1; countLabel.textContent = range.value; }
+    });
+
+    // Restart testing button (progress page)
+    document.getElementById('restartBtnProgress')?.addEventListener('click', resetUI);
+
+    // Fullscreen live preview toggle
+    document.getElementById('fullscreenToggle').addEventListener('change', async (e) => {
+        fullscreenPreviewActive = e.target.checked;
+        await getActiveTab();
+
+        const liveBrowsers = document.getElementById('liveBrowsers');
+        if (fullscreenPreviewActive) {
+            if (liveBrowsers) liveBrowsers.style.display = 'none';
+            if (lastLivePreviews.length > 0) {
+                await injectFullscreenPreview(lastLivePreviews);
+            }
+        } else {
+            if (liveBrowsers) liveBrowsers.style.display = '';
+            await removeFullscreenPreview();
+        }
     });
 
     // Restore saved state
@@ -390,6 +551,23 @@ function updateProgress(data) {
 
     // ── Live Browser Iframes ──
     if (data.persona_results && data.persona_results.length > 0) {
+        // Track live previews for fullscreen mode
+        const newPreviews = data.persona_results
+            .filter(p => p.live_url)
+            .map(p => ({
+                live_url: p.live_url,
+                persona_name: p.persona_name,
+                persona_type: p.persona_type,
+                status: p.status,
+            }));
+
+        const previewsChanged = JSON.stringify(newPreviews) !== JSON.stringify(lastLivePreviews);
+        lastLivePreviews = newPreviews;
+
+        if (fullscreenPreviewActive && previewsChanged && newPreviews.length > 0) {
+            injectFullscreenPreview(newPreviews);
+        }
+
         const container = document.getElementById('liveBrowsers');
         if (container) {
             data.persona_results.forEach((p, i) => {
@@ -409,6 +587,10 @@ function updateProgress(data) {
                     `;
                     container.appendChild(card);
 
+                    // Show fullscreen toggle once first live browser appears
+                    const toggleWrap = document.getElementById('fullscreenToggleWrap');
+                    if (toggleWrap) toggleWrap.style.display = '';
+
                     card.querySelector('.live-browser-click-overlay').addEventListener('click', () => {
                         openBrowserLightbox(p.live_url, p.persona_name, p.persona_type);
                     });
@@ -426,6 +608,13 @@ function updateProgress(data) {
 
 // ── Results ──────────────────────────────────────────────────────────────────
 function showResults(data) {
+    // Dismiss fullscreen preview
+    if (fullscreenPreviewActive) {
+        fullscreenPreviewActive = false;
+        const toggle = document.getElementById('fullscreenToggle');
+        if (toggle) toggle.checked = false;
+        removeFullscreenPreview();
+    }
     issues = (data.suggested_edits || []).map((edit, i) => ({
         id: edit.id || `issue-${i}`,
         title: edit.description,
@@ -690,10 +879,19 @@ async function copyDeployPrompt() {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 function resetUI() {
+    // Dismiss fullscreen preview
+    if (fullscreenPreviewActive) {
+        fullscreenPreviewActive = false;
+        const toggle = document.getElementById('fullscreenToggle');
+        if (toggle) toggle.checked = false;
+        removeFullscreenPreview();
+    }
+
     if (pollInterval) clearInterval(pollInterval);
     pollInterval = null;
     currentRunId = null;
     lastLogCount = 0;
+    lastLivePreviews = [];
     issues = [];
 
     // Reset tab states
@@ -702,7 +900,9 @@ function resetUI() {
     switchTab('setup');
 
     const liveBrowsers = document.getElementById('liveBrowsers');
-    if (liveBrowsers) liveBrowsers.innerHTML = '';
+    if (liveBrowsers) { liveBrowsers.innerHTML = ''; liveBrowsers.style.display = ''; }
+    const toggleWrap = document.getElementById('fullscreenToggleWrap');
+    if (toggleWrap) toggleWrap.style.display = 'none';
     document.getElementById('liveLogEntries').innerHTML = '';
     const btn = document.getElementById('evaluateBtn');
     btn.disabled = false;

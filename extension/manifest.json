@@ -16,13 +16,7 @@
   "side_panel": {
     "default_path": "panel/panel.html"
   },
-  "action": {
-    "default_icon": {
-      "16": "icons/icon16.png",
-      "48": "icons/icon48.png",
-      "128": "icons/icon128.png"
-    }
-  },
+  "action": {},
   "background": {
     "service_worker": "background.js"
   },
@@ -33,9 +27,5 @@
       "run_at": "document_idle"
     }
   ],
-  "icons": {
-    "16": "icons/icon16.png",
-    "48": "icons/icon48.png",
-    "128": "icons/icon128.png"
-  }
+  "icons": {}
 }
