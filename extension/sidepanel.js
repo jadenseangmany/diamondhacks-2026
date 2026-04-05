@@ -37,6 +37,7 @@ let fixState = {};        // id → 'accepted' | 'rejected' | null
 let appliedStyleId = null; // ID of the injected <style> element (for revert)
 let liveUrls = {};        // persona_key → live URL string
 let mainTabUrl = "";       // URL of the clean "main" tab opened by Python
+let liveBlockedTimer = null; // pending "blocked" detection timer
 
 // ── DOM refs (live iframe) ─────────────────────────────────────────────────────
 const liveIframe     = document.getElementById("live-iframe");
@@ -118,6 +119,7 @@ function onStart(m) {
   taskCount = 0; completedRuns = {}; frictionCount = 0;
   visualFixes = []; fixState = {}; liveUrls = {}; appliedStyleId = null;
   liveIframe.src = "";
+  if (liveBlockedTimer !== null) { clearTimeout(liveBlockedTimer); liveBlockedTimer = null; }
   // Reset live section back to waiting state
   const waiting = document.getElementById("live-waiting");
   const inner   = document.getElementById("live-iframe-inner");
@@ -221,6 +223,12 @@ function switchLivePersona(key) {
 }
 
 function setLiveIframeSrc(url) {
+  // Cancel any pending "blocked" detection timer from a previous tab switch
+  if (liveBlockedTimer !== null) {
+    clearTimeout(liveBlockedTimer);
+    liveBlockedTimer = null;
+  }
+
   // Hide waiting state, show iframe container
   const waiting = document.getElementById("live-waiting");
   const inner   = document.getElementById("live-iframe-inner");
@@ -238,12 +246,13 @@ function setLiveIframeSrc(url) {
   // Detect if iframe is blocked (X-Frame-Options / CSP) — show fallback after timeout
   let loaded = false;
   liveIframe.onload = () => { loaded = true; };
-  setTimeout(() => {
+  liveBlockedTimer = setTimeout(() => {
+    liveBlockedTimer = null;
     if (!loaded && blocked) {
       liveIframe.style.display = "none";
       blocked.style.display = "block";
     }
-  }, 4000);
+  }, 8000);
 }
 
 function switchTab(name) {

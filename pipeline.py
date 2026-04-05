@@ -642,8 +642,7 @@ def generate_visual_fixes(friction_points: list[dict], url: str) -> list[dict]:
             return _re.sub(r'\s*;', ' !important;', prop, count=1)
         return _re.sub(r'[^{}:]+:[^;{}]+;', _add, css)
 
-    # ── Capture before/after screenshots for each fix ────────────────────
-    cdp_ok = asyncio.run(_fbu._check_cdp())
+    # ── Build fix objects (skip CDP screenshots to avoid asyncio cleanup hangs) ─
     visual_fixes: list[dict] = []
 
     for fix in fixes_plan:
@@ -655,13 +654,6 @@ def generate_visual_fixes(friction_points: list[dict], url: str) -> list[dict]:
         severity  = fix.get("severity", "medium").lower()
 
         before_b64 = after_b64 = ""
-        if cdp_ok and (css or js):
-            try:
-                before_b64, after_b64 = asyncio.run(
-                    _capture_fix_pair(url, selector, css, js)
-                )
-            except Exception as e:
-                _pipeline_log(f"screenshot pair failed for fix {fix_id}: {e}")
 
         vf = {
             "id":          fix_id,
