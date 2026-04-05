@@ -39,7 +39,8 @@ let liveUrls = {};        // persona_key → live URL string
 let mainTabUrl = "";       // URL of the clean "main" tab opened by Python
 
 // ── DOM refs (live iframe) ─────────────────────────────────────────────────────
-const liveIframe = document.getElementById("live-iframe");
+const liveIframe     = document.getElementById("live-iframe");
+const liveIframeWrap = document.getElementById("live-iframe-wrap");
 
 // ── DOM refs ───────────────────────────────────────────────────────────────────
 const wsDot      = document.getElementById("ws-dot");

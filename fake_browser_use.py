@@ -822,6 +822,21 @@ async def _run_tasks_multi_persona_async(
         else:
             persona, traces = item
             results[persona] = traces
+
+    # Cancel any lingering browser-use tasks (reconnect handlers, CDP message loops, etc.)
+    # so asyncio.run() can exit cleanly instead of hanging indefinitely.
+    current = asyncio.current_task()
+    remaining = [t for t in asyncio.all_tasks() if t is not current and not t.done()]
+    for task in remaining:
+        task.cancel()
+    if remaining:
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*remaining, return_exceptions=True), timeout=3
+            )
+        except Exception:
+            pass
+
     return results
 
 
