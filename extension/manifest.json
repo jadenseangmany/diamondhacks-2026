@@ -5,7 +5,8 @@
   "description": "Live usability test pipeline monitor with per-persona traces and friction analysis.",
   "permissions": [
     "sidePanel",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
   "host_permissions": ["<all_urls>"],
   "background": {

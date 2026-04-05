@@ -14,10 +14,10 @@
       --muted: #888899;
       --accent: #7c6fff;
       --accent2: #4fc3f7;
+      --code-bg: #080812;
+      --r: 6px;
       --elderly: #ffd700;
-      --adhd: #ff88aa;
-      --nonnative: #88ccff;
-      --pipeline: #a0a8c0;
+      --firsttime: #aaffaa;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -30,152 +30,339 @@
       flex-direction: column;
       overflow: hidden;
     }
+
+    /* ── Header ── */
     header {
       background: linear-gradient(135deg, #1a1040 0%, #0d0d1a 100%);
       border-bottom: 1px solid var(--border);
-      padding: 10px 12px 8px;
+      padding: 9px 12px 7px;
       flex-shrink: 0;
     }
-    header h1 { font-size: 1rem; color: #fff; }
-    header .url { color: var(--accent2); font-size: 0.75rem; margin-top: 2px; word-break: break-all; }
-    .ws-status {
-      display: inline-block;
-      width: 8px; height: 8px;
-      border-radius: 50%;
-      background: #555;
-      margin-right: 5px;
-      vertical-align: middle;
-    }
-    .ws-status.connected { background: #44dd88; }
-    .ws-status.error { background: #ff4444; animation: pulse 1s ease-in-out infinite; }
+    header h1 { font-size: 0.95rem; color: #fff; display: flex; align-items: center; gap: 6px; }
+    .ws-dot { width: 7px; height: 7px; border-radius: 50%; background: #555; flex-shrink: 0; }
+    .ws-dot.ok  { background: #44dd88; }
+    .ws-dot.err { background: #ff4444; animation: pulse 1s ease-in-out infinite; }
     @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-    .ws-label { color: var(--muted); font-size: 0.72rem; }
+    .header-url { color: var(--accent2); font-size: 0.72rem; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ws-hint { color: var(--muted); font-size: 0.68rem; margin-top: 1px; }
 
-    /* Progress bar */
-    .progress-section { padding: 8px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-    .progress-label { color: var(--muted); font-size: 0.72rem; margin-bottom: 4px; display: flex; justify-content: space-between; }
-    .progress-bar-bg { background: var(--bg3); border-radius: 4px; height: 6px; overflow: hidden; }
-    .progress-bar { height: 100%; background: var(--accent); border-radius: 4px; transition: width 0.4s ease; width: 0%; }
+    /* ── Progress ── */
+    .progress-wrap { padding: 7px 12px 5px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .prog-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+    .prog-label { color: var(--muted); font-size: 0.7rem; }
+    .prog-pct   { color: var(--muted); font-size: 0.7rem; }
+    .prog-bg { background: var(--bg3); border-radius: 3px; height: 5px; overflow: hidden; }
+    .prog-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width .4s; width: 0%; }
 
-    /* Persona cards */
-    .personas { display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-    .persona-card {
-      flex: 1;
-      background: var(--bg2);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 6px 8px;
-      text-align: center;
+    /* ── Persona cards ── */
+    .persona-row { display: flex; gap: 5px; padding: 7px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .p-card {
+      flex: 1; background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 5px 6px; text-align: center;
     }
-    .persona-card .p-name { font-size: 0.7rem; font-weight: 600; margin-bottom: 3px; }
-    .persona-card .p-icon { font-size: 1.1rem; margin-bottom: 2px; }
-    .persona-card .p-score { font-size: 0.7rem; color: var(--muted); }
-    .persona-card .p-status { font-size: 0.65rem; margin-top: 2px; }
-    .persona-card.active { border-color: rgba(124,111,255,0.5); background: rgba(124,111,255,0.07); }
+    .p-card.active { border-color: rgba(124,111,255,.5); background: rgba(124,111,255,.07); }
+    .p-icon  { font-size: 1rem; }
+    .p-name  { font-size: 0.65rem; font-weight: 600; margin-top: 1px; }
+    .p-score { font-size: 0.65rem; color: var(--muted); }
+    .p-status{ font-size: 0.62rem; margin-top: 1px; }
 
-    /* Friction count */
-    .friction-bar { display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
-    .friction-label { color: var(--muted); font-size: 0.72rem; }
-    .friction-count { font-weight: 700; font-size: 0.85rem; color: #ff8800; }
-    .friction-latest { color: var(--text); font-size: 0.72rem; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* ── Tabs ── */
+    .tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .tab {
+      flex: 1; padding: 7px 4px; text-align: center; font-size: 0.72rem;
+      font-weight: 600; color: var(--muted); cursor: pointer; letter-spacing: .04em;
+      border-bottom: 2px solid transparent; user-select: none;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent2); border-bottom-color: var(--accent2); }
+    .tab-badge {
+      display: inline-block; background: var(--accent); color: #fff;
+      border-radius: 8px; font-size: 0.6rem; padding: 0 5px;
+      margin-left: 3px; line-height: 1.4;
+    }
 
-    /* Log */
-    .log-section { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
-    .log-header { padding: 6px 12px 4px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
-    .log-header span { color: var(--muted); font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; }
-    .log-clear { background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 3px; padding: 1px 6px; font-size: 0.65rem; cursor: pointer; }
-    .log-clear:hover { color: #fff; border-color: #555; }
-    .log-container {
-      flex: 1;
-      overflow-y: auto;
-      font-family: "SFMono-Regular", Consolas, monospace;
-      font-size: 0.72rem;
-      padding: 0 4px 8px;
+    /* ── Tab panels ── */
+    .panels { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+    .panel { display: none; flex: 1; overflow-y: auto; }
+    .panel.active { display: flex; flex-direction: column; }
+
+    /* ── LIVE tab ── */
+    .log-toolbar { padding: 5px 12px 3px; display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; }
+    .log-toolbar span { color: var(--muted); font-size: 0.68rem; text-transform: uppercase; letter-spacing: .05em; }
+    .btn-sm {
+      background: none; border: 1px solid var(--border); color: var(--muted);
+      border-radius: 3px; padding: 1px 7px; font-size: 0.65rem; cursor: pointer;
+    }
+    .btn-sm:hover { color: #fff; border-color: #666; }
+    .log-body {
+      flex: 1; overflow-y: auto; padding: 0 4px 8px;
+      font-family: "SFMono-Regular", Consolas, monospace; font-size: 0.7rem;
     }
     .log-entry {
-      display: flex;
-      gap: 5px;
-      padding: 2px 8px;
-      border-bottom: 1px solid rgba(255,255,255,0.02);
-      line-height: 1.4;
-      align-items: flex-start;
+      display: flex; gap: 5px; padding: 2px 8px;
+      border-bottom: 1px solid rgba(255,255,255,.025); line-height: 1.4;
     }
-    .log-entry:hover { background: rgba(255,255,255,0.02); }
-    .log-ts { color: var(--muted); flex-shrink: 0; min-width: 62px; }
-    .log-persona { font-weight: 600; flex-shrink: 0; min-width: 100px; }
-    .log-msg { flex: 1; word-break: break-word; }
-    .log-pass { color: #44dd88; }
-    .log-fail { color: #ff4444; }
+    .log-entry:hover { background: rgba(255,255,255,.02); }
+    .le-ts { color: var(--muted); flex-shrink: 0; min-width: 58px; }
+    .le-who { font-weight: 600; flex-shrink: 0; min-width: 96px; }
+    .le-msg { flex: 1; word-break: break-word; }
+    .le-pass { color: #44dd88; }
+    .le-fail { color: #ff4444; }
 
-    .empty-state { color: var(--muted); text-align: center; padding: 2rem; font-size: 0.8rem; line-height: 1.7; }
+    /* ── RESULTS tab ── */
+    .results-body { flex: 1; overflow-y: auto; padding: 10px 12px 16px; }
+    .section-head {
+      font-size: 0.7rem; font-weight: 700; color: var(--accent2);
+      text-transform: uppercase; letter-spacing: .07em;
+      margin: 14px 0 6px; padding-bottom: 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .section-head:first-child { margin-top: 0; }
 
-    /* Done banner */
-    .done-banner { display: none; background: rgba(68,221,136,0.12); border-top: 1px solid rgba(68,221,136,0.3); padding: 8px 12px; text-align: center; color: #44dd88; font-size: 0.8rem; font-weight: 600; flex-shrink: 0; }
-    .done-banner a { color: var(--accent2); }
+    /* Summary card */
+    .summary-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 9px 11px; margin-bottom: 6px;
+    }
+    .summary-card .label { color: var(--muted); font-size: 0.68rem; margin-bottom: 2px; }
+    .summary-card .val   { font-size: 0.82rem; line-height: 1.5; }
+    .flow-item { font-size: 0.78rem; padding: 3px 0; border-bottom: 1px solid var(--border); }
+    .flow-item::before { content: "→ "; color: var(--accent2); }
+
+    /* Task table */
+    .task-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; }
+    .task-table th {
+      background: var(--bg3); color: var(--accent2); padding: 5px 7px;
+      text-align: center; border-bottom: 1px solid var(--border); font-size: 0.68rem;
+    }
+    .task-table th:first-child { text-align: left; }
+    .task-table td { padding: 5px 7px; border-bottom: 1px solid var(--border); vertical-align: top; }
+    .task-table tr:hover td { background: var(--bg3); }
+    .task-num { color: var(--accent); font-weight: 700; min-width: 18px; display: inline-block; }
+    .cell-ok  { color: #44dd88; font-weight: 700; }
+    .cell-fail{ color: #ff4444; font-weight: 700; }
+    .cell-sub { color: var(--muted); font-size: 0.62rem; }
+
+    /* Friction points */
+    .fp-item {
+      border-radius: var(--r); padding: 8px 10px; margin-bottom: 6px;
+      border-left: 3px solid;
+    }
+    .fp-header { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-bottom: 4px; }
+    .sev-badge {
+      display: inline-block; border-radius: 3px; font-size: 0.62rem; font-weight: 700;
+      padding: 1px 6px; letter-spacing: .04em; color: #000;
+    }
+    .fp-el { font-family: monospace; font-size: 0.75rem; color: #c0c0ff; background: var(--code-bg); border: 1px solid var(--border); border-radius: 3px; padding: 0 5px; }
+    .ptag { display: inline-block; background: rgba(124,111,255,.15); border: 1px solid rgba(124,111,255,.3); border-radius: 3px; font-size: 0.6rem; padding: 0 5px; color: #a090ff; }
+    .fp-desc { font-size: 0.78rem; margin-bottom: 2px; }
+    .fp-task { color: var(--muted); font-size: 0.72rem; }
+
+    /* Persona stat cards */
+    .stat-row { display: flex; gap: 6px; margin-bottom: 8px; }
+    .stat-card {
+      flex: 1; background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 8px 10px; text-align: center;
+    }
+    .stat-card .sn { font-size: 0.68rem; color: var(--muted); margin-bottom: 3px; }
+    .stat-card .sv { font-size: 1.5rem; font-weight: 700; line-height: 1; }
+    .stat-card .sl { font-size: 0.62rem; color: var(--muted); }
+    .stat-card .st { font-size: 0.72rem; margin-top: 3px; }
+
+    .persona-insight {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 8px 10px; margin-bottom: 5px;
+    }
+    .persona-insight .pi-name { font-size: 0.72rem; font-weight: 600; color: var(--accent2); margin-bottom: 3px; }
+    .persona-insight .pi-text { font-size: 0.78rem; line-height: 1.5; color: var(--muted); }
+
+    /* ── FIXES tab ── */
+    .fixes-body { flex: 1; overflow-y: auto; padding: 10px 12px 8px; }
+    .fix-card {
+      background: var(--bg2); border: 1px solid var(--border);
+      border-radius: var(--r); padding: 10px 11px; margin-bottom: 8px;
+      transition: border-color .2s;
+    }
+    .fix-card.accepted { border-color: #44dd88; }
+    .fix-card.rejected { border-color: #555; opacity: 0.5; }
+    .fix-head { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; margin-bottom: 6px; }
+    .fix-el { font-family: monospace; font-size: 0.75rem; color: #c0c0ff; background: var(--code-bg); border: 1px solid var(--border); border-radius: 3px; padding: 0 5px; }
+    .fix-description { font-size: 0.82rem; line-height: 1.5; margin-bottom: 8px; color: var(--text); }
+
+    /* Before/after screenshots */
+    .ss-pair { display: flex; gap: 6px; margin-bottom: 8px; }
+    .ss-col { flex: 1; min-width: 0; }
+    .ss-col-label {
+      font-size: 0.6rem; font-weight: 700; letter-spacing: .07em;
+      padding: 2px 6px; border-radius: 3px 3px 0 0; text-align: center;
+    }
+    .before-label { background: #ff4444; color: #fff; }
+    .after-label  { background: #44dd88; color: #000; }
+    .ss-img {
+      width: 100%; display: block; object-fit: cover; object-position: top;
+      border-radius: 0 0 3px 3px; border: 1px solid var(--border);
+      cursor: pointer; max-height: 140px;
+    }
+    .ss-img:hover { border-color: var(--accent2); }
+    .ss-placeholder {
+      height: 80px; background: var(--bg3); border: 1px solid var(--border);
+      border-radius: 0 0 3px 3px; display: flex; align-items: center;
+      justify-content: center; color: var(--muted); font-size: 0.7rem;
+    }
+
+    /* Accept / Reject buttons */
+    .fix-actions { display: flex; gap: 6px; }
+    .btn-accept, .btn-reject {
+      flex: 1; padding: 5px 10px; border-radius: var(--r);
+      font-size: 0.72rem; font-weight: 600; cursor: pointer;
+      border: 1px solid; transition: all .15s;
+    }
+    .btn-accept { background: none; border-color: #44dd88; color: #44dd88; }
+    .btn-accept:hover, .btn-accept.active { background: #44dd88; color: #000; }
+    .btn-reject { background: none; border-color: #666; color: var(--muted); }
+    .btn-reject:hover, .btn-reject.active { background: #444; color: #fff; border-color: #888; }
+
+    /* Sticky footer */
+    .fixes-footer {
+      display: none; flex-shrink: 0; align-items: center; justify-content: space-between;
+      padding: 8px 12px; border-top: 1px solid var(--border); background: var(--bg2);
+    }
+    .fixes-counter { font-size: 0.72rem; color: var(--muted); }
+    .apply-all-btn {
+      background: var(--accent); color: #fff; border: none;
+      border-radius: var(--r); padding: 6px 14px; font-size: 0.75rem;
+      font-weight: 700; cursor: pointer; transition: background .15s;
+    }
+    .apply-all-btn:hover { background: #6a5fff; }
+    .apply-all-btn:disabled { background: #333; color: #666; cursor: default; }
+
+    /* ── Screenshot strip (LIVE tab) ── */
+    .shot-strip {
+      display: flex; gap: 5px; padding: 5px 8px;
+      overflow-x: auto; flex-shrink: 0;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg2); min-height: 0;
+    }
+    .shot-strip:empty { display: none; }
+    .shot-thumb {
+      flex-shrink: 0; position: relative; cursor: pointer;
+    }
+    .shot-thumb img {
+      width: 90px; height: 60px; object-fit: cover; object-position: top;
+      border-radius: 3px; display: block; border: 2px solid var(--border);
+      transition: border-color .15s;
+    }
+    .shot-thumb:hover img { border-color: var(--accent2); }
+    .shot-label {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      background: rgba(0,0,0,.6); color: #fff; font-size: 0.55rem;
+      text-align: center; padding: 1px 2px; border-radius: 0 0 3px 3px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    /* Lightbox */
+    .lightbox {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.85);
+      z-index: 9999; align-items: center; justify-content: center;
+      flex-direction: column; gap: 8px;
+    }
+    .lightbox.open { display: flex; }
+    .lightbox img { max-width: 92vw; max-height: 85vh; border-radius: 6px; }
+    .lightbox-caption { color: #ccc; font-size: 0.75rem; }
+    .lightbox-close {
+      position: absolute; top: 12px; right: 16px; font-size: 1.5rem;
+      color: #fff; cursor: pointer; background: none; border: none;
+    }
+
+    .empty-hint { color: var(--muted); font-size: 0.8rem; text-align: center; padding: 2rem 1rem; line-height: 1.7; }
+    .waiting { color: var(--muted); font-size: 0.75rem; font-style: italic; padding: 8px 0; }
   </style>
 </head>
 <body>
-  <header>
-    <h1>
-      <span class="ws-status" id="ws-dot"></span>
-      Usability Pipeline
-    </h1>
-    <div class="url" id="url-display">Waiting for pipeline…</div>
-    <div class="ws-label" id="ws-label">Connecting to ws://localhost:7655…</div>
-  </header>
 
-  <div class="progress-section">
-    <div class="progress-label">
-      <span id="progress-label-text">No pipeline running</span>
-      <span id="progress-fraction"></span>
-    </div>
-    <div class="progress-bar-bg"><div class="progress-bar" id="progress-bar"></div></div>
+<!-- ── Header ── -->
+<header>
+  <h1><span class="ws-dot" id="ws-dot"></span>Usability Pipeline</h1>
+  <div class="header-url" id="hdr-url">Waiting for pipeline…</div>
+  <div class="ws-hint" id="ws-hint">Connecting to ws://localhost:7655…</div>
+</header>
+
+<!-- ── Progress ── -->
+<div class="progress-wrap">
+  <div class="prog-row">
+    <span class="prog-label" id="prog-label">No pipeline running</span>
+    <span class="prog-pct"  id="prog-pct"></span>
   </div>
+  <div class="prog-bg"><div class="prog-fill" id="prog-fill"></div></div>
+</div>
 
-  <div class="personas">
-    <div class="persona-card" id="card-elderly_user">
-      <div class="p-icon">👴</div>
-      <div class="p-name" style="color:#ffd700;">Elderly</div>
-      <div class="p-score" id="score-elderly_user">—</div>
-      <div class="p-status" id="status-elderly_user"></div>
-    </div>
-    <div class="persona-card" id="card-adhd_user">
-      <div class="p-icon">⚡</div>
-      <div class="p-name" style="color:#ff88aa;">ADHD</div>
-      <div class="p-score" id="score-adhd_user">—</div>
-      <div class="p-status" id="status-adhd_user"></div>
-    </div>
-    <div class="persona-card" id="card-non_native_english">
-      <div class="p-icon">🌐</div>
-      <div class="p-name" style="color:#88ccff;">Non-Native</div>
-      <div class="p-score" id="score-non_native_english">—</div>
-      <div class="p-status" id="status-non_native_english"></div>
-    </div>
+<!-- ── Persona cards ── -->
+<div class="persona-row">
+  <div class="p-card" id="pc-elderly_user">
+    <div class="p-icon">👴</div>
+    <div class="p-name" style="color:var(--elderly)">Elderly User</div>
+    <div class="p-score" id="ps-elderly_user">—</div>
+    <div class="p-status" id="pst-elderly_user"></div>
   </div>
-
-  <div class="friction-bar">
-    <span class="friction-label">Friction points:</span>
-    <span class="friction-count" id="friction-count">0</span>
-    <span class="friction-latest" id="friction-latest">none yet</span>
+  <div class="p-card" id="pc-first_time_user">
+    <div class="p-icon">🆕</div>
+    <div class="p-name" style="color:var(--firsttime)">First-Time User</div>
+    <div class="p-score" id="ps-first_time_user">—</div>
+    <div class="p-status" id="pst-first_time_user"></div>
   </div>
+</div>
 
-  <div class="log-section">
-    <div class="log-header">
+<!-- ── Tabs ── -->
+<div class="tabs">
+  <div class="tab active" data-tab="live">LIVE</div>
+  <div class="tab" data-tab="results">RESULTS <span class="tab-badge" id="badge-results" style="display:none">●</span></div>
+  <div class="tab" data-tab="fixes">FIXES <span class="tab-badge" id="badge-fixes" style="display:none">0</span></div>
+</div>
+
+<!-- ── Panels ── -->
+<div class="panels">
+
+  <!-- LIVE -->
+  <div class="panel active" id="panel-live">
+    <div class="shot-strip" id="shot-strip"></div>
+    <div class="log-toolbar">
       <span>Live Log</span>
-      <button class="log-clear" id="clear-btn">Clear</button>
+      <button class="btn-sm" id="clear-btn">Clear</button>
     </div>
-    <div class="log-container" id="log-container">
-      <div class="empty-state" id="empty-state">
-        Waiting for pipeline to start…<br>
-        Run <code>python main.py &lt;url&gt;</code><br>to begin.
+    <div class="log-body" id="log-body">
+      <div class="empty-hint" id="log-empty">
+        Waiting for pipeline…<br>
+        Run <code>python main.py &lt;url&gt;</code>
       </div>
     </div>
   </div>
 
-  <div class="done-banner" id="done-banner">
-    Pipeline complete — <a id="report-link" href="http://localhost:7654/report.html" target="_blank">view full report</a>
+  <!-- Lightbox -->
+  <div class="lightbox" id="lightbox">
+    <button class="lightbox-close" id="lb-close">✕</button>
+    <img id="lb-img" src="" alt="">
+    <div class="lightbox-caption" id="lb-caption"></div>
   </div>
 
-  <script src="sidepanel.js"></script>
+  <!-- RESULTS -->
+  <div class="panel" id="panel-results">
+    <div class="results-body" id="results-body">
+      <div class="empty-hint">Results appear here after the pipeline finishes.</div>
+    </div>
+  </div>
+
+  <!-- FIXES -->
+  <div class="panel" id="panel-fixes">
+    <div class="fixes-body" id="fixes-body">
+      <div class="empty-hint">Fix recommendations appear here after analysis completes.</div>
+    </div>
+    <div class="fixes-footer" id="fixes-footer">
+      <span class="fixes-counter" id="fixes-counter">0 accepted · 0 rejected</span>
+      <button class="apply-all-btn" id="apply-all-btn" disabled onclick="applyAccepted()">Apply All Accepted</button>
+    </div>
+  </div>
+
+</div>
+
+<script src="sidepanel.js"></script>
 </body>
 </html>
