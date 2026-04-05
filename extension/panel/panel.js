@@ -747,7 +747,7 @@ function updateProgress(data) {
             entry.className = 'log-entry';
 
             // Color-code by persona
-            if (msg.includes('Grandma') || msg.includes('elderly')) {
+            if (msg.includes('Elderly') || msg.includes('elderly')) {
                 entry.classList.add('log-grandma');
             } else if (msg.includes('First Time User') || msg.includes('first_time_user')) {
                 entry.classList.add('log-genz');

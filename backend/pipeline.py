@@ -384,7 +384,7 @@ _PERSONA_THOUGHTS = {
 def _get_persona_thought(persona_name: str, action_type: str) -> str:
     """Get a random persona-appropriate thought for the given action."""
     # Map persona name to key
-    key = "elderly" if "grandma" in persona_name.lower() else "first_time_user"
+    key = "elderly" if "elderly" in persona_name.lower() else "first_time_user"
     thoughts = _PERSONA_THOUGHTS.get(key, _PERSONA_THOUGHTS["first_time_user"])
     options = thoughts.get(action_type, thoughts["default"])
     return random.choice(options)
@@ -417,6 +417,9 @@ def _parse_step_summary(raw: str, persona_name: str, elapsed_sec: float) -> list
         "get browser state",
         "get page elements",
         "python:",
+        "running javascript",
+        "execute javascript",
+        "javascript:",
         "waiting for",
         "get_browser_state",
         "extract_content",
