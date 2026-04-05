@@ -5,13 +5,17 @@
 const API_BASE = 'http://localhost:8000';
 
 // ── SVG Icon Constants ───────────────────────────────────────────────────────
-const ICON_GRANDMA = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2.5" stroke-linecap="round"><circle cx="6" cy="10" r="3"/><circle cx="18" cy="10" r="3"/><path d="M3 10h18"/><path d="M9 10h6"/></svg>';
-const ICON_MILLENNIAL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"></path><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path><line x1="6" y1="1" x2="6" y2="4"></line><line x1="10" y1="1" x2="10" y2="4"></line><line x1="14" y1="1" x2="14" y2="4"></line></svg>';
+const ICON_GRANDMA = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0084FF" stroke-width="2.5" stroke-linecap="round"><circle cx="6" cy="10" r="3"/><circle cx="18" cy="10" r="3"/><path d="M3 10h18"/><path d="M9 10h6"/></svg>';
+const ICON_MILLENNIAL = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#66B3FF" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"></path><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"></path><line x1="6" y1="1" x2="6" y2="4"></line><line x1="10" y1="1" x2="10" y2="4"></line><line x1="14" y1="1" x2="14" y2="4"></line></svg>';
 const ICON_CUSTOM = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#34d399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>';
+const ICON_FIRST_TIME = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#0084FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+const ICON_GENZ = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#66B3FF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z"/><line x1="4" y1="22" x2="4" y2="15"/></svg>';
 
 function personaIcon(type, size = 16) {
     if (type === 'elderly') return ICON_GRANDMA.replace(/16/g, size);
     if (type === 'millennial') return ICON_MILLENNIAL.replace(/16/g, size);
+    if (type === 'first_time') return ICON_FIRST_TIME.replace(/16/g, size);
+    if (type === 'gen_z') return ICON_GENZ.replace(/16/g, size);
     return ICON_CUSTOM.replace(/16/g, size);
 }
 
@@ -116,6 +120,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
     document.getElementById('taskCountDown').addEventListener('click', () => {
         if (parseInt(range.value) > 1) { range.value = parseInt(range.value) - 1; countLabel.textContent = range.value; }
+    });
+
+    // Header action buttons
+    document.getElementById('headerRefreshBtn').addEventListener('click', () => {
+        resetUI();
+    });
+    document.getElementById('headerCloseBtn').addEventListener('click', () => {
+        window.close();
     });
 
     // Restore saved state if an evaluation is in progress
