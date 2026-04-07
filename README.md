@@ -1,6 +1,6 @@
 # AgentUX — Agentic Usability Testing Platform
 
-**Winner of the Wildcard Track at [DiamondHacks 2026](https://devpost.com/software/agent-ux) (UC San Diego)**
+**Winner at the [DiamondHacks 2026](https://devpost.com/software/agent-ux) Hackathon at UC San Diego**
 
 <img width="333" height="222" alt="medium" src="https://github.com/user-attachments/assets/0a5fdab3-05e2-42b5-aa1d-4efbb17f8e46" />
 
