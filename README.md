@@ -11,11 +11,6 @@ AgentUX replaces manual usability testing with parallel AI agents powered by [Br
 
 ---
 
-## Demo
-
-**Generate Tasks**
-
-
 ## Features
 
 | Feature | Description |
