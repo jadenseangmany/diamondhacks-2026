@@ -1,6 +1,6 @@
 # AgentUX — AI-Powered Usability Testing Platform
 
-**Winner of the Wildcard Track at [DiamondHacks 2026](https://www.diamondhacks.io/) (UC San Diego)**
+**Winner of the Wildcard Track at [DiamondHacks 2026](https://devpost.com/software/agent-ux) (UC San Diego)**
 
 AgentUX replaces manual usability testing with parallel AI agents powered by [Browser Use](https://browser-use.com/). It runs diverse user personas simultaneously on any website through a Chrome extension, generating confusion heatmaps, actionable fix suggestions, and live browser previews — all with human-in-the-loop approval before changes are applied.
 
