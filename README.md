@@ -1,4 +1,4 @@
-# AgentUX — AI-Powered Usability Testing Platform
+# AgentUX — Agentic Usability Testing Platform
 
 **Winner of the Wildcard Track at [DiamondHacks 2026](https://devpost.com/software/agent-ux) (UC San Diego)**
 
