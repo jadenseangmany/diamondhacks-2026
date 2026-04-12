@@ -525,9 +525,10 @@ async def _run_single_persona(
     cloud_api_url = "https://api.browser-use.com/api/v3/sessions"
 
     for task in run.tasks:
+        task_start_time = datetime.now()
         try:
             run.log_messages.append(
-                f"[{datetime.now().isoformat()}] [TASK] {persona_name} starting: {task.title}"
+                f"[{task_start_time.isoformat()}] [TASK_START] {persona_name}: {task.title}"
             )
             if on_progress:
                 on_progress(run)
@@ -670,7 +671,11 @@ async def _run_single_persona(
                             run.log_messages.append(f"[WARN] {persona_name} session timed out")
 
                 except Exception as e:
-                    run.log_messages.append(f"[WARN] Cloud API failed for {persona_name}/{task.title}: {e}")
+                    import traceback
+                    error_details = traceback.format_exc()
+                    print(f"[ERROR] Cloud API exception for {persona_name}/{task.title}:")
+                    print(error_details)
+                    run.log_messages.append(f"[WARN] Cloud API failed for {persona_name}/{task.title}: {str(e)[:100]}")
                     bu_api_key = ""  # Fall through to LLM fallback below
 
             # ── LLM fallback if no Cloud API key or Cloud API failed ──
@@ -720,6 +725,19 @@ async def _run_single_persona(
                 result.tasks_completed += 1
             else:
                 result.tasks_failed += 1
+
+            # Calculate task duration
+            task_end_time = datetime.now()
+            duration_seconds = (task_end_time - task_start_time).total_seconds()
+            duration_str = f"{int(duration_seconds // 60)}m {int(duration_seconds % 60)}s" if duration_seconds >= 60 else f"{int(duration_seconds)}s"
+
+            # Log task completion
+            status_emoji = "✓" if (completed and not failed) else "✗"
+            run.log_messages.append(
+                f"[{task_end_time.isoformat()}] [TASK_END] {persona_name}: {task.title} {status_emoji} ({duration_str})"
+            )
+            if on_progress:
+                on_progress(run)
 
             result.task_results.append({
                 "task_id": task.id,
