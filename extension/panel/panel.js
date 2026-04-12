@@ -27,6 +27,7 @@ let activeTabId = null;
 let pageSummary = '';
 let generatedTasks = [];
 let taskCount = 2;
+let queuedMessages = []; // Messages waiting for their persona cards to be created
 
 // ── Tab Navigation ──────────────────────────────────────────────────────────
 function switchTab(tabName) {
@@ -315,6 +316,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     // Restore saved state
     await restoreState();
+
+    // Initialize button states
+    updateGenerateButton();
+    updateEvalButton();
 });
 
 // ── State Persistence ────────────────────────────────────────────────────────
@@ -380,15 +385,34 @@ function updatePersonaCount() {
 }
 
 async function generateTasks() {
-    const btn = document.getElementById('generateTasksBtn');
-    const mascot = document.getElementById('taskGenMascot');
-    btn.disabled = true;
-    btn.textContent = 'Generating...';
-    mascot.style.display = '';
+    const overlay = document.getElementById('generatingTasksOverlay');
+    const normalUI = document.getElementById('taskGenNormalUI');
+    const title = document.getElementById('generatingTitle');
+    const subtitle = document.getElementById('generatingSubtitle');
+    const statusText = document.getElementById('generatingStatusText');
+    const progressSection = document.getElementById('taskGenProgress');
+    const progressFill = document.getElementById('taskGenProgressFill');
+    const progressCount = document.getElementById('taskGenProgressCount');
+    const totalCount = document.getElementById('taskGenTotal');
+    const personasDisplay = document.getElementById('generatingPersonas');
+
+    // Show overlay, hide normal UI
+    normalUI.style.display = 'none';
+    overlay.style.display = 'flex';
+
+    // Get selected personas for display
+    const selectedPersonas = Array.from(document.querySelectorAll('.persona-chip.active'))
+        .map(chip => chip.querySelector('.chip-name').textContent);
 
     try {
-        // Summarize in background if not already done
+        // PHASE 1: Analyze webpage content
         if (!pageSummary) {
+            title.textContent = 'Analyzing webpage content...';
+            subtitle.textContent = '';
+            statusText.textContent = 'AI agent analyzing page structure...';
+            progressSection.style.display = 'none';
+            personasDisplay.style.display = 'none';
+
             const sumResp = await fetch(`${API_BASE}/api/summarize`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -398,6 +422,31 @@ async function generateTasks() {
             const sumData = await sumResp.json();
             pageSummary = sumData.summary;
         }
+
+        // PHASE 2: Generate tasks
+        title.textContent = 'Generating Tasks...';
+        subtitle.textContent = `Analyzing page for ${selectedPersonas.join(', ')}`;
+        statusText.textContent = 'Creating usability test scenarios...';
+
+        // Show progress bar and personas
+        progressSection.style.display = 'block';
+        personasDisplay.style.display = 'flex';
+        totalCount.textContent = taskCount;
+
+        // Display selected personas
+        personasDisplay.innerHTML = selectedPersonas.map(name =>
+            `<div class="generating-persona-chip">${name}</div>`
+        ).join('');
+
+        // Simulate progress (since API doesn't provide incremental updates)
+        let currentProgress = 0;
+        const progressInterval = setInterval(() => {
+            if (currentProgress < taskCount - 1) {
+                currentProgress++;
+                progressCount.textContent = `${currentProgress}/${taskCount}`;
+                progressFill.style.width = `${(currentProgress / taskCount) * 100}%`;
+            }
+        }, 300);
 
         const resp = await fetch(`${API_BASE}/api/generate-tasks`, {
             method: 'POST',
@@ -409,18 +458,28 @@ async function generateTasks() {
             }),
         });
 
+        clearInterval(progressInterval);
+
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
 
         const data = await resp.json();
         generatedTasks = data.tasks;
+
+        // Show completion
+        progressCount.textContent = `${taskCount}/${taskCount}`;
+        progressFill.style.width = '100%';
+
+        // Wait a moment to show completion, then render
+        await new Promise(resolve => setTimeout(resolve, 500));
+
         renderTaskCards();
     } catch (err) {
         console.error('Task generation failed:', err);
         alert('Failed to generate tasks. Make sure the backend is running on port 8000.');
     } finally {
-        mascot.style.display = 'none';
-        btn.disabled = false;
-        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg> Generate Tasks';
+        // Hide overlay, show normal UI
+        overlay.style.display = 'none';
+        normalUI.style.display = 'block';
     }
 }
 
@@ -437,6 +496,15 @@ function updateEvalButton() {
     }
 }
 
+function updateGenerateButton() {
+    const btn = document.getElementById('generateTasksBtn');
+    if (generatedTasks.length > 0) {
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg> Generate More Tasks';
+    } else {
+        btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/></svg> Generate Tasks';
+    }
+}
+
 function renderTaskCards() {
     const container = document.getElementById('taskCards');
     editingTaskIndex = null;
@@ -445,6 +513,7 @@ function renderTaskCards() {
         container.innerHTML = '<div class="task-cards-empty" id="taskCardsEmpty">Click "Generate Tasks" to create test tasks from the page summary</div>';
         document.getElementById('toggleAddTaskBtn').style.display = 'none';
         updateEvalButton();
+        updateGenerateButton();
         return;
     }
 
@@ -482,6 +551,7 @@ function renderTaskCards() {
     });
 
     updateEvalButton();
+    updateGenerateButton();
 }
 
 function openTaskEditor(index) {
@@ -738,27 +808,98 @@ function updateProgress(data) {
 
     // Render live log entries
     if (data.log_messages && data.log_messages.length > lastLogCount) {
-        const logEl = document.getElementById('liveLogEntries');
         const newEntries = data.log_messages.slice(lastLogCount);
         lastLogCount = data.log_messages.length;
 
+        // Get all persona cards and their names
+        const cards = document.querySelectorAll('.live-browser-card');
+        const personaMap = new Map();
+        cards.forEach((card, i) => {
+            const personaName = card.dataset.personaName;
+            if (personaName) {
+                personaMap.set(personaName.toLowerCase(), { card, logId: `live-log-${i}`, originalName: personaName });
+            }
+        });
+
         newEntries.forEach(msg => {
+            // Extract timestamp first and format it
+            const timestampMatch = msg.match(/\[(\d{4}-\d{2}-\d{2}T[\d:.]+)\]\s*/);
+            let timeStr = '';
+            let msgWithoutTimestamp = msg;
+            if (timestampMatch) {
+                const d = new Date(timestampMatch[1]);
+                timeStr = d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                msgWithoutTimestamp = msg.replace(timestampMatch[0], '');
+            }
+
+            // Try to match log message to a persona
+            let matchedPersona = null;
+            const msgLower = msgWithoutTimestamp.toLowerCase();
+
+            // Check each persona name against the message
+            for (const [nameLower, info] of personaMap.entries()) {
+                // Match the persona name in the message
+                // Try various formats: "Persona:", "persona:", "Persona ", etc.
+                const variations = [
+                    nameLower,
+                    info.originalName.toLowerCase(),
+                    info.originalName.toLowerCase().replace('-', ' '),
+                    info.originalName.toLowerCase().replace('_', ' '),
+                    info.originalName.toLowerCase().replace('-time', ' time'),
+                ];
+
+                for (const variant of variations) {
+                    // Check if persona name appears with colon, space, or in task markers
+                    if (msgLower.includes(variant + ':') ||
+                        msgLower.includes(variant + ' ') ||
+                        msgLower.includes('persona: ' + variant)) {
+                        matchedPersona = info;
+                        break;
+                    }
+                }
+
+                if (matchedPersona) break;
+            }
+
+            // If no persona matched, queue the message for later
+            if (!matchedPersona) {
+                queuedMessages.push(msg);
+                return;
+            }
+
+            const logEl = document.getElementById(matchedPersona.logId);
+            if (!logEl) {
+                // Card should exist but doesn't - queue for later
+                queuedMessages.push(msg);
+                return;
+            }
+
             const entry = document.createElement('div');
             entry.className = 'log-entry';
 
-            // Color-code by persona
-            if (msg.includes('Elderly') || msg.includes('elderly')) {
-                entry.classList.add('log-grandma');
-            } else if (msg.includes('First Time User') || msg.includes('first_time_user')) {
-                entry.classList.add('log-genz');
-            } else if (msg.includes('Custom')) {
-                entry.classList.add('log-custom');
-            } else if (msg.includes('[WARN]')) {
-                entry.classList.add('log-warn');
-            } else if (msg.includes('[ERROR]')) {
-                entry.classList.add('log-error');
+            // Check for task messages first (use cleaned message without timestamp)
+            const isTaskStart = msgWithoutTimestamp.includes('[TASK_START]');
+            const isTaskEnd = msgWithoutTimestamp.includes('[TASK_END]');
+
+            if (isTaskStart || isTaskEnd) {
+                entry.classList.add('log-task-marker');
+                if (isTaskStart) entry.classList.add('log-task-start');
+                if (isTaskEnd) entry.classList.add('log-task-end');
             } else {
-                entry.classList.add('log-system');
+                // Color-code by persona for regular messages
+                if (msg.includes('Elderly') || msg.includes('elderly')) {
+                    entry.classList.add('log-grandma');
+                } else if (msg.includes('First Time User') || msg.includes('first_time_user')) {
+                    entry.classList.add('log-genz');
+                } else if (msg.includes('Custom')) {
+                    entry.classList.add('log-custom');
+                } else if (msg.includes('[WARN]')) {
+                    entry.classList.add('log-warn');
+                } else if (msg.includes('[ERROR]')) {
+                    entry.classList.add('log-error');
+                } else {
+                    entry.classList.add('log-system');
+                }
             }
 
             // Tag-based styling
@@ -769,19 +910,32 @@ function updateProgress(data) {
             if (msg.includes('confusion') || msg.includes('backtracking')) entry.classList.add('log-confusion');
             if (msg.includes('Zoomed in')) entry.classList.add('log-zoom');
 
-            // Extract timestamp and format as HH:MM:SS
-            let cleaned = msg;
-            const tsMatch = msg.match(/\[(\d{4}-\d{2}-\d{2}T[\d:.]+)\]\s*/);
-            let timeStr = '';
-            if (tsMatch) {
-                const d = new Date(tsMatch[1]);
-                timeStr = d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
-                cleaned = msg.replace(tsMatch[0], '');
+            // Use the already extracted timestamp and cleaned message
+            let cleaned = msgWithoutTimestamp;
+
+            // Clean task markers and format specially
+            if (isTaskStart) {
+                cleaned = cleaned.replace('[TASK_START] ', '');
+                // Extract persona and task name
+                const parts = cleaned.split(': ');
+                if (parts.length >= 2) {
+                    cleaned = `▶ Starting: ${parts.slice(1).join(': ')}`;
+                }
+            } else if (isTaskEnd) {
+                cleaned = cleaned.replace('[TASK_END] ', '');
+                // Extract persona, task name, and status
+                const parts = cleaned.split(': ');
+                if (parts.length >= 2) {
+                    const taskInfo = parts.slice(1).join(': ');
+                    cleaned = `■ Completed: ${taskInfo}`;
+                }
+            } else {
+                // Clean regular tags
+                cleaned = cleaned.replace('[TASK] ', '');
+                cleaned = cleaned.replace(' [slow]', '');
+                cleaned = cleaned.replace('[done] ', '');
+                cleaned = cleaned.replace(' [thinking]', '').replace('[thinking]: ', '');
             }
-            cleaned = cleaned.replace('[TASK] ', '');
-            cleaned = cleaned.replace(' [slow]', '');
-            cleaned = cleaned.replace('[done] ', '');
-            cleaned = cleaned.replace(' [thinking]', '').replace('[thinking]: ', '');
 
             if (timeStr) {
                 const ts = document.createElement('span');
@@ -795,10 +949,10 @@ function updateProgress(data) {
             } else {
                 entry.textContent = cleaned;
             }
-            logEl.appendChild(entry);
-        });
 
-        logEl.scrollTop = logEl.scrollHeight;
+            logEl.appendChild(entry);
+            logEl.scrollTop = logEl.scrollHeight;
+        });
     }
 
     // ── Live Browser Iframes ──
@@ -824,9 +978,11 @@ function updateProgress(data) {
         if (container) {
             data.persona_results.forEach((p, i) => {
                 const iframeId = `live-iframe-${i}`;
+                const logId = `live-log-${i}`;
                 if (p.live_url && !document.getElementById(iframeId)) {
                     const card = document.createElement('div');
                     card.className = 'live-browser-card';
+                    card.dataset.personaName = p.persona_name;
                     card.innerHTML = `
                         <div class="live-browser-label" style="border-color:var(--primary)">
                             <span class="live-persona-badge" style="background:var(--primary)">${personaIcon(p.persona_type)} ${p.persona_name}</span>
@@ -836,8 +992,21 @@ function updateProgress(data) {
                             <iframe id="${iframeId}" src="${p.live_url}" class="live-browser-iframe" allow="autoplay; clipboard-write" sandbox="allow-same-origin allow-scripts allow-popups allow-forms"></iframe>
                             <div class="live-browser-click-overlay"></div>
                         </div>
+                        <div class="live-log">
+                            <div class="live-log-header">
+                                <span>Live Agent Feed</span>
+                            </div>
+                            <div class="live-log-entries" id="${logId}"></div>
+                        </div>
                     `;
                     container.appendChild(card);
+
+                    // Replay queued messages now that card exists
+                    if (queuedMessages.length > 0) {
+                        // Reset lastLogCount to replay recent messages
+                        lastLogCount = Math.max(0, lastLogCount - queuedMessages.length - 5);
+                        queuedMessages = [];
+                    }
 
                     // Show fullscreen toggle once first live browser appears
                     const toggleWrap = document.getElementById('fullscreenToggleWrap');
@@ -1166,12 +1335,12 @@ function resetUI() {
     document.getElementById('taskCards').innerHTML = '<div class="task-cards-empty" id="taskCardsEmpty">Click "Generate Tasks" to create test tasks from the page summary</div>';
     document.getElementById('taskCountValue').textContent = '2';
     updateEvalButton();
+    updateGenerateButton();
 
     const liveBrowsers = document.getElementById('liveBrowsers');
     if (liveBrowsers) { liveBrowsers.innerHTML = ''; liveBrowsers.style.display = ''; }
     const toggleWrap = document.getElementById('fullscreenToggleWrap');
     if (toggleWrap) toggleWrap.style.display = 'none';
-    document.getElementById('liveLogEntries').innerHTML = '';
     const btn = document.getElementById('evaluateBtn');
     btn.disabled = false;
     btn.innerHTML = `

@@ -330,6 +330,153 @@ body {
 /* ── Task Generation Section ─────────────────────────────────────────── */
 .task-generation-section {
     margin-bottom: 16px;
+    position: relative;
+}
+
+/* Generating Tasks Overlay */
+.generating-tasks-overlay {
+    padding: 32px 20px;
+    text-align: center;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    min-height: 280px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    gap: 20px;
+}
+
+.mascot-generating {
+    position: relative;
+    width: 80px;
+    height: 80px;
+    margin: 0 auto;
+}
+
+.mascot-generating-img {
+    width: 80px;
+    height: 80px;
+    position: relative;
+    z-index: 2;
+    animation: mascot-float 2s ease-in-out infinite;
+}
+
+.mascot-glow {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 120px;
+    height: 120px;
+    background: radial-gradient(circle, rgba(0, 132, 255, 0.3) 0%, transparent 70%);
+    border-radius: 50%;
+    animation: mascot-glow-pulse 2s ease-in-out infinite;
+    z-index: 1;
+}
+
+@keyframes mascot-float {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-8px); }
+}
+
+@keyframes mascot-glow-pulse {
+    0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+    50% { opacity: 1; transform: translate(-50%, -50%) scale(1.1); }
+}
+
+.mascot-generating-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+}
+
+.mascot-generating-sub {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    font-family: var(--font-sans);
+}
+
+.task-gen-progress {
+    width: 100%;
+    margin-top: 8px;
+}
+
+.task-gen-progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.task-gen-progress-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    letter-spacing: 0.5px;
+    font-family: var(--font-sans);
+}
+
+.task-gen-progress-count {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--primary);
+    font-family: var(--font-mono);
+}
+
+.task-gen-progress-bar {
+    width: 100%;
+    height: 6px;
+    background: var(--bg-surface);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.task-gen-progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary) 0%, #4da3ff 100%);
+    border-radius: 3px;
+    width: 0%;
+    transition: width 0.3s ease;
+}
+
+.generating-personas {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 4px;
+}
+
+.generating-persona-chip {
+    padding: 6px 14px;
+    background: rgba(0, 132, 255, 0.15);
+    border: 1px solid rgba(0, 132, 255, 0.3);
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--primary);
+    font-family: var(--font-sans);
+}
+
+.generating-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
+    margin-top: 8px;
+}
+
+.generating-spinner {
+    animation: spinner-rotate 1.5s linear infinite;
+}
+
+@keyframes spinner-rotate {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
 }
 
 .task-gen-header {
@@ -745,6 +892,14 @@ body {
     overflow: hidden;
 }
 
+/* Live log inside browser card */
+.live-browser-card .live-log {
+    margin-top: 0;
+    border: none;
+    border-top: 1px solid var(--border-color);
+    border-radius: 0;
+}
+
 .live-log-header {
     padding: 8px 12px;
     background: var(--bg-surface);
@@ -814,6 +969,35 @@ body {
     background: rgba(0, 132, 255, 0.06);
     padding: 6px 12px;
     border-left: 3px solid var(--primary);
+}
+
+/* Task markers - start/end indicators */
+.log-entry.log-task-marker {
+    font-weight: 700;
+    padding: 8px 12px;
+    margin: 4px 0;
+    border-radius: 4px;
+    border: none;
+    border-left: 4px solid;
+    background: rgba(0, 132, 255, 0.08);
+}
+
+.log-entry.log-task-start {
+    border-left-color: #22d3ee;
+    background: rgba(34, 211, 238, 0.1);
+    color: #22d3ee;
+}
+
+.log-entry.log-task-end {
+    border-left-color: #10b981;
+    background: rgba(16, 185, 129, 0.1);
+    color: #10b981;
+}
+
+.log-entry.log-task-marker .log-timestamp {
+    color: inherit;
+    opacity: 0.8;
+    font-weight: 600;
 }
 
 .log-entry.log-slow {
@@ -931,8 +1115,8 @@ body {
 
 /* ── Live Browsers ──────────────────────────────────────────────────── */
 .live-browsers {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
+    display: flex;
+    flex-direction: column;
     gap: 12px;
     margin-top: 16px;
 }
@@ -942,9 +1126,10 @@ body {
     border: 1px solid var(--border-color);
     border-radius: var(--radius-md);
     overflow: hidden;
-    cursor: zoom-in;
     transition: all var(--transition-normal);
     position: relative;
+    display: flex;
+    flex-direction: column;
 }
 
 .live-browser-click-overlay::after {
